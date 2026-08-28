@@ -1,22 +1,22 @@
 package com.typesafe.dbuild.build
 
-import java.io.File
-import com.typesafe.dbuild.repo.core.{ Repository, LocalRepoHelper }
-import com.typesafe.dbuild.model._
-import com.typesafe.dbuild.project.resolve.AggregateProjectResolver
 import com.typesafe.dbuild.logging.ConsoleLogger
-import com.typesafe.dbuild.project.build.LocalBuildRunner
-import com.typesafe.dbuild.utils.TrackedProcessBuilder
-import sbt.io.Path._
-import sbt.io.syntax._
-import sys.process._
-import com.typesafe.dbuild.support.sbt.SbtBuildSystem
-import scala.collection.immutable.SortedMap
-import com.typesafe.dbuild.support.sbt.{ SbtRunner, SbtBuildConfig }
-import com.typesafe.dbuild.support.sbt.SbtRunner.SbtFileNames._
-import com.typesafe.dbuild.support.sbt.Repositories
 import com.typesafe.dbuild.logging.Logger
+import com.typesafe.dbuild.model.*
+import com.typesafe.dbuild.project.build.LocalBuildRunner
+import com.typesafe.dbuild.project.resolve.AggregateProjectResolver
+import com.typesafe.dbuild.repo.core.{ Repository, LocalRepoHelper }
+import com.typesafe.dbuild.support.sbt.Repositories
+import com.typesafe.dbuild.support.sbt.SbtBuildSystem
+import com.typesafe.dbuild.support.sbt.SbtRunner.SbtFileNames.*
+import com.typesafe.dbuild.support.sbt.{ SbtRunner, SbtBuildConfig }
+import com.typesafe.dbuild.utils.TrackedProcessBuilder
+import java.io.File
 import java.io.PrintWriter
+import sbt.io.Path.*
+import sbt.io.syntax.*
+import scala.collection.immutable.SortedMap
+import sys.process.*
 
 /**
  * Implementation of the "dbuild checkout" command. It will resolve and reconfigure an sbt project
@@ -115,12 +115,12 @@ object Checkout {
             writer.println("echo 'Preparing sbt. This may take a while...'")
             writer.println(cmd.map { _.replaceAll("'", "'\"'\"'") }.mkString("'", "' '", "'"))
             writer.close()
-            Seq("chmod", "u+x", commandFile.getCanonicalPath) !;
+            Seq("chmod", "u+x", commandFile.getCanonicalPath).!
             println()
             println("Ready! You can start the debugging environment by running: " + commandFile.getCanonicalPath)
             println()
             println("You can also rebuild the project just like dbuild would do, by issuing \"dbuild-build\" at the sbt prompt.")
-        }), targetCommands = Seq("shell"))
+        }), targetCommands = Seq("shell"))()
 
       case _ => sys.error("This build UUID was found, but its data seems corrupted. Please report.")
     }

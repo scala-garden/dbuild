@@ -1,27 +1,26 @@
 package com.typesafe.dbuild.build
 
-import com.typesafe.dbuild.model._
-import com.typesafe.dbuild.project.build._
-import com.typesafe.dbuild.repo.core.{ Repository, LocalRepoHelper }
-import com.typesafe.dbuild.project.dependencies.ExtractBuildDependencies
-import com.typesafe.dbuild.support.BuildSystemCore
-import com.typesafe.dbuild.project.{ BuildSystem, BuildData }
-import com.typesafe.dbuild.logging.Logger
-import com.typesafe.dbuild.hashing
 import com.typesafe.dbuild.graph
+import com.typesafe.dbuild.hashing
+import com.typesafe.dbuild.logging.Logger
 import Logger.prepareLogMsg
-import akka.actor.{ Actor, ActorRef, Props }
-import akka.pattern.{ ask, pipe, after }
-import akka.pattern.AskTimeoutException
-import scala.concurrent.duration._
+import com.typesafe.dbuild.model.*
+import com.typesafe.dbuild.model.SeqDBCH.*
+import com.typesafe.dbuild.project.build.*
+import com.typesafe.dbuild.project.dependencies.ExtractBuildDependencies
+import com.typesafe.dbuild.project.{ BuildSystem, BuildData }
+import com.typesafe.dbuild.repo.core.GlobalDirs
+import com.typesafe.dbuild.repo.core.{ Repository, LocalRepoHelper }
+import com.typesafe.dbuild.support.BuildSystemCore
+import java.io.File
+import org.apache.maven.execution.BuildFailure
+import org.apache.pekko.actor.{ Actor, ActorRef, Props }
+import org.apache.pekko.pattern.AskTimeoutException
+import org.apache.pekko.pattern.{ ask, pipe, after }
+import org.apache.pekko.util.Timeout
+import scala.concurrent.duration.*
 import scala.concurrent.{ Future, Promise, ExecutionContext }
 import ExecutionContext.Implicits.global
-import akka.util.Timeout
-import java.io.File
-import com.typesafe.dbuild.repo.core.GlobalDirs
-import org.apache.maven.execution.BuildFailure
-import Logger.prepareLogMsg
-import com.typesafe.dbuild.model.SeqDBCH._
 
 case class RunDBuild(conf: DBuildConfiguration, confName: String,
   buildTarget: Option[String], logger: Logger, options: BuildRunOptions)
@@ -33,13 +32,13 @@ class SimpleBuildActor(extractor: ActorRef, builder: ActorRef, repository: Repos
   final def forwardingErrorsToFutures[A](sender: ActorRef)(f: => A): A =
     try f catch {
       case e: Exception =>
-        sender ! akka.actor.Status.Failure(e)
+        sender ! org.apache.pekko.actor.Status.Failure(e)
         throw e
     }
 
   def receive = {
-    case RunDBuild(inputConf, confName, buildTarget, log, options) => forwardingErrorsToFutures(sender) {
-      val listener = sender
+    case RunDBuild(inputConf, confName, buildTarget, log, options) => forwardingErrorsToFutures(sender()) {
+      val listener = sender()
 
       val extractionPhaseDuration = options.timeouts.extractionPhaseTimeout
       val buildPhaseDuration = options.timeouts.buildPhaseTimeout
@@ -342,7 +341,7 @@ class SimpleBuildActor(extractor: ActorRef, builder: ActorRef, repository: Repos
             ExtractionFailed(projConfig.name, Seq(), "Cause: " + prepareLogMsg(log, e))
         }
       }
-    futureOutcomes map { s: Seq[ExtractionOutcome] =>
+    futureOutcomes map { (s: Seq[ExtractionOutcome]) =>
       if (s exists { _.isInstanceOf[ExtractionFailed] }) {
         if (s exists { _.isInstanceOf[TimedOut] })
           new ExtractionFailed(".", s, "Timeout: the extraction phase took longer than " + extractionPhaseDuration) with TimedOut

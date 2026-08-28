@@ -1,14 +1,13 @@
 package com.typesafe.dbuild.repo.core
 
-import com.typesafe.dbuild.model._
-import java.io.File
-import com.typesafe.dbuild.adapter.Adapter
-import Adapter.{ RichFile, IO, Path }
-import Adapter.syntaxio._
-import Path._
-import com.typesafe.dbuild.model.Utils.{ writeValue, readValue }
-import com.typesafe.dbuild.logging.Logger
 import com.typesafe.dbuild.hashing
+import com.typesafe.dbuild.logging.Logger
+import com.typesafe.dbuild.model.*
+import com.typesafe.dbuild.model.Utils.{ writeValue, readValue }
+import java.io.File
+import sbt.io.syntax.*
+import sbt.io.{ RichFile, IO, Path }
+import Path.*
 
 object LocalRepoHelper {
 
@@ -37,8 +36,8 @@ object LocalRepoHelper {
 
   // we use publishMeta() when we need to publish some data that may already be
   // in the remote repository (for instance: repeatable build info, or repeatable project info)
-  def publishMeta[T <: { def uuid: String }](data: T, remote: Repository,
-    makeKey: String => String, log: Logger)(implicit m: scala.reflect.Manifest[T]): Unit =
+  def publishMeta[T <: HasUuid](data: T, remote: Repository,
+    makeKey: String => String, log: Logger)(implicit encT: io.circe.Encoder[T], decT: io.circe.Decoder[T]): Unit =
     IO.withTemporaryFile("meta-data", data.uuid) { file =>
       val key = makeKey(data.uuid)
       // is the file already there? We might try to publish twice, as a previous run
@@ -166,7 +165,7 @@ object LocalRepoHelper {
   }
 
   def materializeProjectMetadata(uuid: String, remote: ReadableRepository): ProjectArtifactInfo = {
-    def getMeta[T](makeMeta: String => String)(implicit m: scala.reflect.Manifest[T]) = {
+    def getMeta[T](makeMeta: String => String)(implicit d: io.circe.Decoder[T]) = {
       val key = makeMeta(uuid)
       val file = remote get key
       try readValue[T](file)

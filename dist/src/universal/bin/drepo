@@ -5,5 +5,5 @@ SCRIPT_DIR=$(dirname $0)
 java -Xss16M \
   -Dsbt.boot.properties=$SCRIPT_DIR/drepo.properties \
   -Djline.shutdownhook=true \
-  -jar $SCRIPT_DIR/dbuild-launcher.jar \
+  -jar $SCRIPT_DIR/sbt-launcher.jar \
   $@

@@ -1,27 +1,34 @@
 package com.typesafe.dbuild.support.sbt
 
-import com.typesafe.dbuild.model._
-import com.typesafe.dbuild.logging.Logger
-import com.typesafe.dbuild.adapter.Adapter
-import Adapter.{ IO, Path }
-import Adapter.syntaxio._
-import Path._
 import _root_.java.io.File
-import sys.process.Process
-import com.typesafe.dbuild.model.Utils.{ readValue, writeValue }
+import _root_.sbt.io.syntax.*
+import _root_.sbt.io.{ IO, Path }
+import com.typesafe.dbuild.logging.Logger
 import com.typesafe.dbuild.logging.Logger.logFullStackTrace
-import com.fasterxml.jackson.annotation.JsonProperty
-import com.typesafe.dbuild.model.SeqStringH._
+import com.typesafe.dbuild.model.*
+import com.typesafe.dbuild.model.CirceSupport.*
+import com.typesafe.dbuild.model.SeqStringH.*
+import com.typesafe.dbuild.model.Utils.{ readValue, writeValue }
 import com.typesafe.dbuild.utils.TrackedProcessBuilder
+import io.circe.generic.semiauto.{ deriveEncoder, deriveDecoder }
+import io.circe.{ Encoder, Decoder }
+import sys.process.Process
+import Path.*
 
 /**
  * Input data to the dbuild sbt plugin
  */
 case class ExtractionInput(
   projects: Seq[String],
-  @JsonProperty("excluded-projects") excludedProjects: Seq[String],
+  excludedProjects: Seq[String],
   extractionScalaVersion: Option[String],
   debug: Boolean)
+object ExtractionInput {
+  implicit val extractionInputEncoder: Encoder[ExtractionInput] =
+    dropNullValues(renamedEnc("excludedProjects" -> "excluded-projects")(deriveEncoder[ExtractionInput]))
+  implicit val extractionInputDecoder: Decoder[ExtractionInput] =
+    renamedDec("excludedProjects" -> "excluded-projects")(deriveDecoder[ExtractionInput])
+}
 
 object SbtExtractor {
 
@@ -76,7 +83,7 @@ object SbtExtractor {
     // Let's place them in the required dirs
     SbtRunner.writeSbtFiles(projectDir, finalSbtFiles, log, debug)
 
-    import SbtRunner.SbtFileNames._
+    import SbtRunner.SbtFileNames.*
     // This is for the first level only
     val inputDataFirst = ExtractionInput(extra.projects, extra.exclude, scalaVersion, debug)
     val inputDataAll = inputDataFirst +: Stream.fill(levels - 1)(ExtractionInput(Seq.empty, Seq.empty, None, debug))

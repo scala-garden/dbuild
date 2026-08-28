@@ -1,25 +1,23 @@
 package com.typesafe.dbuild.project.dependencies
 
-import com.typesafe.dbuild.adapter.Adapter
-import Adapter.IO
-import Adapter.Path._
-import java.io.File
-import com.typesafe.dbuild.project.resolve.ProjectResolver
-import com.typesafe.dbuild.model.{ ProjectConfigAndExtracted, ProjectBuildConfig, ExtractedBuildMeta, SeqDepsModifiers }
-import com.typesafe.dbuild.model.{ ExtractionOK, ExtractionOutcome, ExtractionFailed, ExtractionConfig, DepsModifiers }
-import com.typesafe.dbuild.logging._
-import com.typesafe.dbuild.repo.core.Repository
-import com.typesafe.dbuild.model.Utils.{ writeValue, readValue }
+import com.typesafe.dbuild.logging.*
 import com.typesafe.dbuild.logging.Logger.prepareLogMsg
-import org.apache.ivy.core.module.id.ModuleId
-import com.typesafe.dbuild.model.ProjectRef
-import com.typesafe.dbuild.project.cleanup.Recycling.{ updateTimeStamp, markSuccess }
 import com.typesafe.dbuild.model.ExtractionOK
-import org.apache.ivy.core.module.id.ModuleRevisionId
 import com.typesafe.dbuild.model.ProjectRef
-import com.typesafe.dbuild.model.SeqDepsModifiersH._
-import com.typesafe.dbuild.model.SeqStringH._
+import com.typesafe.dbuild.model.SeqDepsModifiersH.*
+import com.typesafe.dbuild.model.SeqStringH.*
+import com.typesafe.dbuild.model.Utils.{ writeValue, readValue }
+import com.typesafe.dbuild.model.{ ExtractionOK, ExtractionOutcome, ExtractionFailed, ExtractionConfig, DepsModifiers }
+import com.typesafe.dbuild.model.{ ProjectConfigAndExtracted, ProjectBuildConfig, ExtractedBuildMeta, SeqDepsModifiers }
+import com.typesafe.dbuild.project.cleanup.Recycling.{ updateTimeStamp, markSuccess }
+import com.typesafe.dbuild.project.resolve.ProjectResolver
+import com.typesafe.dbuild.repo.core.Repository
 import com.typesafe.dbuild.utils.TrackedProcessBuilder
+import java.io.File
+import org.apache.ivy.core.module.id.ModuleId
+import org.apache.ivy.core.module.id.ModuleRevisionId
+import sbt.io.IO
+import sbt.io.Path.*
 
 /** This is used to extract dependencies from projects. */
 class Extractor(
@@ -79,7 +77,7 @@ class Extractor(
       // extractor.dependencyExtractor.resolve() also resolves the nested ones, recursively
       logger.debug("Resolving " + build.name + " in " + dir.getAbsolutePath)
       val config = ExtractionConfig(dependencyExtractor.resolve(extractionConfig.buildConfig, dir, this, logger))
-      config.buildConfig.getCommit foreach { s: String => logger.info("Commit: " + s) }
+      config.buildConfig.getCommit foreach { (s: String) => logger.info("Commit: " + s) }
       logger.debug("Repeatable Config: " + writeValue(config))
       val outcome = extractedResolvedWithCache(config, tracker, dir, logger, debug)
       outcome match {

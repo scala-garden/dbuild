@@ -1,21 +1,21 @@
 package com.typesafe.dbuild.support.sbt
 
-import com.typesafe.dbuild.model._
-import com.typesafe.dbuild.support.BuildSystemCore
-import com.typesafe.dbuild.adapter.Adapter.Path._
-import com.typesafe.dbuild.logging.Logger
-import com.typesafe.dbuild.model.SbtExtraConfig
 import _root_.java.io.File
+import _root_.sbt.io.Path.*
+import _root_.sbt.io.syntax.*
 import com.typesafe.dbuild.adapter.Defaults
-import com.typesafe.dbuild.adapter.Adapter.syntaxio._
-import com.typesafe.dbuild.repo.core.GlobalDirs
-import com.typesafe.dbuild.project.dependencies.Extractor
-import com.typesafe.dbuild.project.build.LocalBuildRunner
-import com.typesafe.dbuild.project.{ BuildSystem, BuildData }
+import com.typesafe.dbuild.logging.Logger
+import com.typesafe.dbuild.model.*
+import com.typesafe.dbuild.model.SbtExtraConfig
+import com.typesafe.dbuild.model.SeqSeqStringH.*
+import com.typesafe.dbuild.model.SeqStringH.*
 import com.typesafe.dbuild.model.Utils.{ writeValue, readValue }
+import com.typesafe.dbuild.project.build.LocalBuildRunner
+import com.typesafe.dbuild.project.dependencies.Extractor
+import com.typesafe.dbuild.project.{ BuildSystem, BuildData }
+import com.typesafe.dbuild.repo.core.GlobalDirs
+import com.typesafe.dbuild.support.BuildSystemCore
 import com.typesafe.dbuild.support.sbt.SbtRunner.{ sbtIvyCache, buildArtsFile }
-import com.typesafe.dbuild.model.SeqSeqStringH._
-import com.typesafe.dbuild.model.SeqStringH._
 import com.typesafe.dbuild.utils.TrackedProcessBuilder
 
 /** Implementation of the SBT build system. */
@@ -93,7 +93,7 @@ class SbtBuildSystem(repos: List[xsbti.Repository], workingDir: File, debug: Boo
     val config = SbtBuildConfig(ec, project.config.crossVersion getOrElse sys.error("Internal error: crossVersion not expanded in runBuild."),
       project.config.checkMissing getOrElse sys.error("Internal error: checkMissing not expanded in runBuild."),
       project.config.rewriteOverrides getOrElse sys.error("Internal error: rewriteOverrides not expanded in runBuild."), info)
-    SbtBuilder.buildSbtProject(repos, runner)(projDir, config, tracker, buildData.log, buildData.debug)
+    SbtBuilder.buildSbtProject(repos, runner)(projDir, config, tracker, buildData.log, buildData.debug)()
     readValue[BuildArtifactsOut](buildArtsFile(projDir))
   }
 }

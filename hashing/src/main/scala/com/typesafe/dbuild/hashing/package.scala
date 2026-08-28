@@ -1,8 +1,8 @@
 package com.typesafe.dbuild
+import collection.JavaConverters.*
 import com.typesafe.config.ConfigValue
-import collection.JavaConverters._
 import java.nio.ByteBuffer
-import scala.concurrent.duration._
+import scala.concurrent.duration.*
 
 package object hashing {
 
@@ -27,13 +27,13 @@ package object hashing {
       // precisely negative durations in most Scala versions, see
       // Scala issues #9949 and #10320
       case d: Duration        => addBytes(d.toString)
-      case map: Map[String @unchecked,_] =>
+      case map: Map[String @unchecked, ?] =>
         val data = map.toSeq.sortBy(_._1)
         data foreach { case (k,v) =>
           addBytes(k)
           addBytes(v)
         }
-      case s: Traversable[_] =>
+      case s: Traversable[?] =>
         // First add a traversable marker..
         md update 1.toByte
         s foreach addBytes
@@ -41,10 +41,10 @@ package object hashing {
         // Add a product marker
         md update 5.toByte
         s.productIterator foreach addBytes
-      case list: java.util.List[_] =>
+      case list: java.util.List[?] =>
         md update 1.toByte
         list.asScala foreach addBytes
-      case map: java.util.Map[String @unchecked,_] =>
+      case map: java.util.Map[String @unchecked, ?] =>
         val data = map.entrySet.iterator.asScala.toSeq.sortBy(_.getKey)
         data foreach { kv =>
           addBytes(kv.getKey)

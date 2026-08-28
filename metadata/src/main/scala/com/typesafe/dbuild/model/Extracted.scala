@@ -1,9 +1,7 @@
 package com.typesafe.dbuild.model
-import com.fasterxml.jackson.annotation.{ JsonCreator, JsonProperty }
-
-// Note: all of the case classes in this file are serialized/deserialized
-// by using the "jacks" library. For that library to work correctly, there
-// must not be any companion objects defined for those case classes.
+import CirceDerivationCompat.*
+import CirceSupport.*
+import io.circe.{ Encoder, Decoder }
 
 /**
  * A project dep is an extracted *external* build dependency.  I.e. this is a
@@ -16,6 +14,10 @@ case class ProjectRef(
   classifier: Option[String] = None) {
   override def toString = organization + ":" + name + ":" + (classifier map (_ + ":") getOrElse "") + extension
 }
+object ProjectRef {
+  implicit val projectRefEncoder: Encoder[ProjectRef] = dropNullValues(deriveEncoder[ProjectRef])
+  implicit val projectRefDecoder: Decoder[ProjectRef] = deriveDecoder[ProjectRef]
+}
 
 /**
  * Represents extracted Project information in a build.  A project is akin to a
@@ -26,6 +28,10 @@ case class Project(
   organization: String,
   artifacts: Seq[ProjectRef],
   dependencies: Seq[ProjectRef])
+object Project {
+  implicit val projectEncoder: Encoder[Project] = deriveEncoder[Project]
+  implicit val projectDecoder: Decoder[Project] = deriveDecoder[Project]
+}
 
 /**
  * Describes the project and dependency information of a project.
@@ -35,6 +41,10 @@ case class Project(
  * The subproj list can be empty for build systems that do not support subprojects.
  */
 case class ProjMeta(version: String, projects: Seq[Project], subproj: Seq[String] = Seq.empty)
+object ProjMeta {
+  implicit val projMetaEncoder: Encoder[ProjMeta] = deriveEncoder[ProjMeta]
+  implicit val projMetaDecoder: Decoder[ProjMeta] = deriveDecoder[ProjMeta]
+}
 
 /**
  * Represents the *Extracted* metadata of a build.
@@ -51,9 +61,7 @@ case class ProjMeta(version: String, projects: Seq[Project], subproj: Seq[String
  * plugins of the plugins (if any), and so on.
  * "version" and "projects" of the levels above the first are of no particular use.
  */
-case class ExtractedBuildMeta(@JsonProperty("proj-info") projInfo: Seq /*Levels*/ [ProjMeta]) {
-  // do NOT define secondary constructors, otherwise the Jacks/Jackson library may get quite confused
-
+case class ExtractedBuildMeta(projInfo: Seq /*Levels*/ [ProjMeta]) {
   def getHead = (projInfo.headOption getOrElse sys.error("Internal Error: Empty ProjInfo in ExtractedBuildMeta"))
   // compatibility, only base level
   def subproj = getHead.subproj
@@ -73,6 +81,12 @@ case class ExtractedBuildMeta(@JsonProperty("proj-info") projInfo: Seq /*Levels*
       case (ProjMeta(version, projects, subproj), index) =>
         "%s -> (%s, %s, %s)" format (index, version, projects.mkString("\n\t", "\n\t", "\n"), subproj.mkString("\n  ", ", ", "\n"))
     })
+}
+object ExtractedBuildMeta {
+  implicit val extractedBuildMetaEncoder: Encoder[ExtractedBuildMeta] =
+    renamedEnc("projInfo" -> "proj-info")(deriveEncoder[ExtractedBuildMeta])
+  implicit val extractedBuildMetaDecoder: Decoder[ExtractedBuildMeta] =
+    renamedDec("projInfo" -> "proj-info")(deriveDecoder[ExtractedBuildMeta])
 }
 object ExtractedBuildMetaH {
   def apply(version: String, projects: Seq[Project], subproj: Seq[String] = Seq.empty): ExtractedBuildMeta =

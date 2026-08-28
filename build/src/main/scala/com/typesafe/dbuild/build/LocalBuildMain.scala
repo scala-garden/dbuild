@@ -1,29 +1,29 @@
 package com.typesafe.dbuild.build
 
-import java.io.File
-import akka.actor.{ ActorSystem, Props }
-import scala.concurrent.Await
-import akka.util.Timeout
-import akka.pattern.AskTimeoutException
-import scala.concurrent.duration._
-import scala.concurrent.Future
-import scala.util.{Success,Failure}
-import com.typesafe.dbuild.model._
-import com.typesafe.dbuild.model.Utils.{ readValue, writeValue }
-import com.typesafe.dbuild.repo.core._
-import com.typesafe.dbuild.model.ClassLoaderMadness
-import com.typesafe.dbuild.project.dependencies.Extractor
-import com.typesafe.dbuild.support.BuildSystemCore
+import com.typesafe.config.ConfigFactory
+import com.typesafe.dbuild.logging
+import com.typesafe.dbuild.logging.Logger
 import com.typesafe.dbuild.logging.Logger.prepareLogMsg
-import akka.pattern.ask
+import com.typesafe.dbuild.model.*
+import com.typesafe.dbuild.model.ClassLoaderMadness
+import com.typesafe.dbuild.model.Utils.{ readValue, writeValue }
+import com.typesafe.dbuild.project.dependencies.Extractor
+import com.typesafe.dbuild.repo.core.*
 import com.typesafe.dbuild.repo.core.GlobalDirs.checkForObsoleteDirs
 import com.typesafe.dbuild.support
-import com.typesafe.dbuild.logging
-import akka.actor.{DeadLetter, Actor}
-import com.typesafe.dbuild.logging.Logger
+import com.typesafe.dbuild.support.BuildSystemCore
 import com.typesafe.dbuild.utils.TrackedProcessBuilder
+import java.io.File
+import org.apache.pekko.actor.{ ActorSystem, Props }
+import org.apache.pekko.actor.{DeadLetter, Actor}
+import org.apache.pekko.pattern.AskTimeoutException
+import org.apache.pekko.pattern.ask
+import org.apache.pekko.util.Timeout
+import scala.concurrent.Await
 import scala.concurrent.ExecutionContext.Implicits.global
-import com.typesafe.config.ConfigFactory
+import scala.concurrent.Future
+import scala.concurrent.duration.*
+import scala.util.{Success,Failure}
 
 class DeadLetterMonitorActor(logger: Logger)
   extends Actor {
@@ -61,14 +61,14 @@ class LocalBuildMain(repos: List[xsbti.Repository], options: BuildRunOptions) {
   // Gymnastics for classloader madness
 
   val system = ClassLoaderMadness.withContextLoader(getClass.getClassLoader) {
-  val conf = ConfigFactory.parseString("akka.log-dead-letters-during-shutdown: off\n" +
-                                       "akka.log-dead-letters: off" )
+  val conf = ConfigFactory.parseString("pekko.log-dead-letters-during-shutdown: off\n" +
+                                       "pekko.log-dead-letters: off" )
     ActorSystem.create("dbuild", conf)
   }
   val logMgr = {
     val mgr = system.actorOf(Props(new logging.ChainedLoggerSupervisorActor), "ChainedLoggerSupervisorActor")
-    val logDirManagerActor = (mgr ? Props(new logging.LogDirManagerActor(new File(targetDir, "logs"))))(1 minute)
-    val systemOutLoggerActor = (mgr ? Props(new logging.SystemOutLoggerActor(options.debug)))(1 minute)
+    val logDirManagerActor = (mgr ? Props(new logging.LogDirManagerActor(new File(targetDir, "logs"))))(Timeout(1.minute))
+    val systemOutLoggerActor = (mgr ? Props(new logging.SystemOutLoggerActor(options.debug)))(Timeout(1.minute))
     mgr
   }
   val repository = Repository.default
@@ -96,10 +96,10 @@ class LocalBuildMain(repos: List[xsbti.Repository], options: BuildRunOptions) {
     TrackedProcessBuilder.abortAll()
     implicit val timeout: Timeout = 3.minutes
     Await.result((logMgr ? "exit").mapTo[String], Duration.Inf)
-    system.shutdown() // pro forma, as all loggers should already be stopped at this point
+    system.terminate() // pro forma, as all loggers should already be stopped at this point
     try {
       println("Shutting down, please wait...")
-      system.awaitTermination(4.minute)
+      Await.ready(system.whenTerminated, 4.minute)
     } catch {
       case e:Exception => println("Warning: system did not shut down within the allotted time")
     }

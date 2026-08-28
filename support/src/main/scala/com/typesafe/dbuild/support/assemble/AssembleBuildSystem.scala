@@ -1,34 +1,35 @@
 package com.typesafe.dbuild.support.assemble
 
-import com.typesafe.dbuild.model._
-import org.apache.commons.io.FilenameUtils
-import org.apache.commons.io.FileUtils
 import _root_.java.io.File
-import com.typesafe.dbuild.adapter.Adapter
-import Adapter.Path._
-import Adapter.{IO,NameFilter,allPaths,toFF}
-import Adapter.IO.relativize
-import Adapter.syntaxio._
+import _root_.sbt.io.FileFilter.{ globFilter => toFF }
+import _root_.sbt.io.IO.relativize
+import _root_.sbt.io.Path.*
+import _root_.sbt.io.syntax.*
+import _root_.sbt.io.{ IO, NameFilter }
+import collection.JavaConverters.*
+import com.typesafe.dbuild.adapter.Adapter.allPaths
+import com.typesafe.dbuild.hashing
 import com.typesafe.dbuild.logging.Logger
-import sys.process._
-import com.typesafe.dbuild.repo.core.LocalRepoHelper
+import com.typesafe.dbuild.model.*
+import com.typesafe.dbuild.model.SeqDBCH.*
 import com.typesafe.dbuild.model.Utils.{ writeValue, readValue }
-import com.typesafe.dbuild.project.dependencies.Extractor
-import com.typesafe.dbuild.project.build.LocalBuildRunner
 import com.typesafe.dbuild.project.BuildData
 import com.typesafe.dbuild.project.BuildSystem
+import com.typesafe.dbuild.project.build.BuildDirs.localRepos
+import com.typesafe.dbuild.project.build.LocalBuildRunner
+import com.typesafe.dbuild.project.dependencies.Extractor
+import com.typesafe.dbuild.repo.core.LocalRepoHelper
 import com.typesafe.dbuild.support.BuildSystemCore
-import com.typesafe.dbuild.hashing
-import collection.JavaConverters._
-import org.apache.maven.model.{ Model, Dependency }
-import org.apache.maven.model.io.xpp3.{ MavenXpp3Reader, MavenXpp3Writer }
-import org.apache.maven.model.Dependency
-import org.apache.ivy.util.ChecksumHelper
 import com.typesafe.dbuild.support.NameFixer.fixName
 import com.typesafe.dbuild.utils.TrackedProcessBuilder
+import org.apache.commons.io.FileUtils
+import org.apache.commons.io.FilenameUtils
 import org.apache.ivy
-import com.typesafe.dbuild.project.build.BuildDirs.localRepos
-import com.typesafe.dbuild.model.SeqDBCH._
+import org.apache.ivy.util.ChecksumHelper
+import org.apache.maven.model.Dependency
+import org.apache.maven.model.io.xpp3.{ MavenXpp3Reader, MavenXpp3Writer }
+import org.apache.maven.model.{ Model, Dependency }
+import sys.process.*
 
 /**
  * The "assemble" build system accepts a list of nested projects, with the same format
@@ -209,7 +210,7 @@ object AssembleBuildSystem extends BuildSystemCore {
     val localRepo = input.outRepo
     // We do a bunch of in-place file operations in the localRepo, before returning.
     // To avoid problems due to stale files, delete all contents before proceeding.
-    IO.delete(localRepo.*(toFF("*")).get)
+    IO.delete(localRepo.*(toFF("*")).get())
 
     def mavenArtifactDir(repoDir: File, ref: ProjectRef, crossSuffix: String) =
       ref.organization.split('.').foldLeft(repoDir)(_ / _) / (ref.name + crossSuffix)
@@ -228,7 +229,7 @@ object AssembleBuildSystem extends BuildSystemCore {
         val artCross = if (isScalaCoreRef(art)) "" else crossSuffix
         Seq(mavenArtifactDir(localRepo, art, artCross),
           ivyArtifactDir(localRepo, art, artCross))
-      }.distinct.flatMap { allPaths(_).get }.
+      }.distinct.flatMap { allPaths(_).get() }.
         // Since this may be a real local maven repo, it also contains
         // the "maven-metadata-local.xml" files, which should /not/ end up in the repository.
         filterNot(file => file.isDirectory || file.getName == "maven-metadata-local.xml").map(f)
@@ -262,7 +263,7 @@ object AssembleBuildSystem extends BuildSystemCore {
           tracker, Seq.empty, Seq.empty, BuildData(log.newNestedLogger(p.name, p.name), buildData.debug))
         val artifactsOut = outcome match {
           case o: BuildGood => o.artsOut
-          case o: BuildBad => sys.error("Part " + p.name + ": " + o.status)
+          case o: BuildBad => sys.error("Part " + p.name + ": " + o.status())
         }
         val q = (p.name, artifactsOut)
         log.debug("---> " + q)
@@ -410,10 +411,10 @@ object AssembleBuildSystem extends BuildSystemCore {
     val allArtifactsOut = artifactsMap.map { _._2 }
     val available = allArtifactsOut.flatMap { _.results }.flatMap { _.artifacts }
 
-    (allPaths(localRepo).get).filter(_.getName.endsWith(".pom")).foreach { patchPomDependencies(_, available) }
+    (allPaths(localRepo).get()).filter(_.getName.endsWith(".pom")).foreach { patchPomDependencies(_, available) }
 
     val ivyHome = dir / ".ivy2" / "cache"
-    (allPaths(localRepo).get).filter(_.getName == "ivy.xml").foreach { patchIvyDependencies(_, available, ivyHome, localRepo) }
+    (allPaths(localRepo).get()).filter(_.getName == "ivy.xml").foreach { patchIvyDependencies(_, available, ivyHome, localRepo) }
 
     // dbuild SHAs must be re-computed (since the POM/Ivy files changed)
     // We preserve the list of original subprojects (and consequently modules),
@@ -458,13 +459,13 @@ object AssembleBuildSystem extends BuildSystemCore {
     // Members declared in ivy.util.extendable.ExtendableItem
     def getAttribute(x: String): String =
       m.getAttribute(x)
-    def getAttributes(): java.util.Map[_, _] =
+    def getAttributes(): java.util.Map[?, ?] =
       m.getAttributes()
     def getExtraAttribute(x: String): String =
       m.getExtraAttribute(x)
-    def getExtraAttributes(): java.util.Map[_, _] =
+    def getExtraAttributes(): java.util.Map[?, ?] =
       m.getExtraAttributes()
-    def getQualifiedExtraAttributes(): java.util.Map[_, _] =
+    def getQualifiedExtraAttributes(): java.util.Map[?, ?] =
       m.getQualifiedExtraAttributes()
     // Members declared in ivy.core.module.descriptor.ModuleDescriptor
     def canExclude(): Boolean =
@@ -493,9 +494,9 @@ object AssembleBuildSystem extends BuildSystemCore {
       m.getDependencies()
     def getDescription(): String =
       m.getDescription()
-    def getExtraAttributesNamespaces(): java.util.Map[_, _] =
+    def getExtraAttributesNamespaces(): java.util.Map[?, ?] =
       m.getExtraAttributesNamespaces()
-    def getExtraInfo(): java.util.Map[_, _] =
+    def getExtraInfo(): java.util.Map[?, ?] =
       m.getExtraInfo()
     def getHomePage(): String =
       m.getHomePage()
@@ -543,8 +544,6 @@ object AssembleBuildSystem extends BuildSystemCore {
   }
 
   def patchIvyDependencies(file: File, available: Seq[ArtifactLocation], ivyHome: File, localRepo: File) = {
-    import _root_.scala.collection.JavaConversions._
-
     val settings = new ivy.core.settings.IvySettings()
     settings.setDefaultIvyUserDir(ivyHome)
     val parser = ivy.plugins.parser.xml.XmlModuleDescriptorParser.getInstance()
@@ -622,7 +621,7 @@ object AssembleBuildSystem extends BuildSystemCore {
     val reader = new MavenXpp3Reader()
     val model = reader.read(new _root_.java.io.FileReader(pom))
     // transform dependencies
-    val deps: Seq[Dependency] = model.getDependencies.asScala
+    val deps: Seq[Dependency] = model.getDependencies.asScala.toSeq
     val newDeps: _root_.java.util.List[Dependency] = (deps map { m =>
       available.find { artifact =>
         artifact.info.organization == m.getGroupId &&

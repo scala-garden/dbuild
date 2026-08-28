@@ -1,7 +1,7 @@
 package com.typesafe.dbuild.repo.core
 
 import java.io.File
-import com.typesafe.dbuild.adapter.Adapter.IO
+import sbt.io.IO
 
 /** A cached remote repository. */
 class OfflineLocalCacheRepository(cacheDir: File) extends ReadableRepository {

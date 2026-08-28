@@ -1,13 +1,12 @@
 package com.typesafe.dbuild.repo.core
 
-import com.typesafe.dbuild.model._
 import LocalRepoHelper.ResolutionResult
-import java.io.File
-import com.typesafe.dbuild.adapter.Adapter
-import Adapter.{ RichFile, IO, Path }
-import Adapter.syntaxio._
-import Path._
+import com.typesafe.dbuild.model.*
 import com.typesafe.dbuild.model.Utils.writeValue
+import java.io.File
+import sbt.io.syntax.*
+import sbt.io.{ RichFile, IO, Path }
+import Path.*
 
 /** Expose for SBT launcher support. */
 class SbtRepoMain extends xsbti.AppMain {

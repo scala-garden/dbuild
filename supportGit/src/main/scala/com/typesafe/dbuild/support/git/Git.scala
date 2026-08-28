@@ -1,28 +1,28 @@
 package com.typesafe.dbuild.support.git
 
-import sys.process._
 import _root_.java.io.File
 import _root_.java.net.URI
+import collection.JavaConverters.*
 import com.typesafe.dbuild.logging.Logger
-import org.eclipse.jgit.api.{ Git => JGit, _ }
-import org.eclipse.jgit.storage.file._
-import org.eclipse.jgit.transport._
-import org.eclipse.jgit.transport.TagOpt._
+import com.typesafe.dbuild.support.OS
+import com.typesafe.dbuild.utils.Time.timed
+import java.io.CharArrayWriter
+import org.eclipse.jgit.api.CreateBranchCommand.SetupUpstreamMode.*
+import org.eclipse.jgit.api.ListBranchCommand.ListMode.*
+import org.eclipse.jgit.api.ResetCommand.ResetType.HARD
+import org.eclipse.jgit.api.{ Git => JGit, * }
+import org.eclipse.jgit.lib.Constants.HEAD
+import org.eclipse.jgit.lib.NullProgressMonitor
+import org.eclipse.jgit.lib.ObjectId
 import org.eclipse.jgit.lib.ProgressMonitor
 import org.eclipse.jgit.lib.TextProgressMonitor
-import org.eclipse.jgit.lib.NullProgressMonitor
 import org.eclipse.jgit.lib.ThreadSafeProgressMonitor
-import collection.JavaConverters._
-import java.io.CharArrayWriter
-import org.eclipse.jgit.api.ListBranchCommand.ListMode._
-import org.eclipse.jgit.api.CreateBranchCommand.SetupUpstreamMode._
 import org.eclipse.jgit.revwalk.RevCommit
 import org.eclipse.jgit.revwalk.RevWalk
-import org.eclipse.jgit.lib.ObjectId
-import org.eclipse.jgit.api.ResetCommand.ResetType.HARD
-import org.eclipse.jgit.lib.Constants.HEAD
-import com.typesafe.dbuild.utils.Time.timed
-import com.typesafe.dbuild.support.OS
+import org.eclipse.jgit.storage.file.*
+import org.eclipse.jgit.transport.*
+import org.eclipse.jgit.transport.TagOpt.*
+import sys.process.*
 
 sealed abstract class GitImplementation {
   /** a logical descriptor of the repository */
@@ -86,7 +86,7 @@ object GitJGit extends GitImplementation {
   // optional output logging or monitoring
   // no implicit classes yet, we are still on 2.9
   type T[A, B <: GitCommand[A]] = GitCommand[A] { def setProgressMonitor(monitor: ProgressMonitor): B }
-  implicit def asRunnableCommand[A, B <: GitCommand[A]](t: T[A, B]) = new RunnableCommand(t)
+  implicit def asRunnableCommand[A, B <: GitCommand[A]](t: T[A, B]): RunnableCommand[A, B] = new RunnableCommand(t)
   class RunnableCommand[A, B <: GitCommand[A]](c: T[A, B]) {
     def run(log: Logger) = {
       // a TextProgressMonitor() accepts a java.io.Writer. However, we need

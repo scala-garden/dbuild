@@ -1,59 +1,94 @@
 package com.typesafe.dbuild.model
 
 import ClassLoaderMadness.withContextLoader
+import com.typesafe.config.Config
 import com.typesafe.config.ConfigException.Missing
 import com.typesafe.config.ConfigFactory.{ parseString, parseFile }
 import com.typesafe.config.ConfigRenderOptions
-import com.typesafe.config.Config
-import com.lambdaworks.jacks.JacksOption._
-import com.lambdaworks.jacks.JacksMapper
-import com.fasterxml.jackson.databind._
-import com.fasterxml.jackson.databind.module.SimpleModule
-import scala.concurrent.duration._
+import io.circe.parser.parse
+import io.circe.{ Decoder, Encoder, Json, JsonObject, ParsingFailure, DecodingFailure }
 import java.io.File
+import scala.concurrent.duration.*
+
+/** Thrown on a JSON parsing/decoding failure; kept under this name for compatibility with callers
+ *  that used to catch Jackson's JsonMappingException. */
+class JsonMappingException(message: String, cause: Throwable) extends RuntimeException(message, cause) {
+  def this(message: String) = this(message, null)
+}
+
+/**
+ * Small helpers used to replicate, on top of Circe, the exact wire conventions the old
+ * jacks/Jackson-based serialization relied on:
+ *  - fields renamed via a kebab-case JSON key (formerly @JsonProperty(...)).
+ *  - Option fields that are entirely omitted from the JSON object when None
+ *    (formerly CaseClassSkipNulls(true)), rather than written as `null`.
+ *  - the "Flex" single-value-or-array encoding used by the various SeqXxx wrapper types.
+ */
+object CirceSupport {
+  /** Renames JSON object keys on the way out (Scala field name -> JSON name). */
+  def renamedEnc[A](pairs: (String, String)*)(enc: Encoder.AsObject[A]): Encoder.AsObject[A] =
+    Encoder.AsObject.instance { a =>
+      val map = pairs.toMap
+      JsonObject.fromIterable(enc.encodeObject(a).toIterable.map { case (k, v) => (map.getOrElse(k, k), v) })
+    }
+  /** Renames JSON object keys on the way in (JSON name -> Scala field name), the reverse of renamedEnc. */
+  def renamedDec[A](pairs: (String, String)*)(dec: Decoder[A]): Decoder[A] = {
+    val reverse = pairs.map(_.swap).toMap
+    dec.prepare(_.withFocus(_.mapObject { obj =>
+      JsonObject.fromIterable(obj.toIterable.map { case (k, v) => (reverse.getOrElse(k, k), v) })
+    }))
+  }
+
+  /** Drops JSON-null-valued keys entirely, instead of writing them out as `null`. */
+  def dropNullValues[A](enc: Encoder.AsObject[A]): Encoder.AsObject[A] =
+    Encoder.AsObject.instance(a => JsonObject.fromIterable(enc.encodeObject(a).toIterable.filterNot(_._2.isNull)))
+
+  /** The "Flex" encoding: a Seq of exactly one element is written as a bare value, not a one-element array. */
+  def flexEncoder[T](enc: Encoder[T]): Encoder[Seq[T]] = Encoder.instance {
+    case Seq(single) => enc(single)
+    case s           => Json.arr(s.map(enc.apply): _*)
+  }
+  /** The "Flex" decoding: a bare value becomes a one-element Seq; a JSON array decodes elementwise. */
+  def flexDecoder[T](dec: Decoder[T]): Decoder[Seq[T]] = Decoder.instance { c =>
+    c.value.asArray match {
+      case Some(arr) =>
+        arr.foldLeft(Right(Vector.empty): Decoder.Result[Vector[T]]) { (acc, j) =>
+          for { v <- acc; t <- dec.decodeJson(j) } yield v :+ t
+        }.map(_.toSeq)
+      case None => dec.decodeJson(c.value).map(Seq(_))
+    }
+  }
+}
 
 object Utils {
-  private val mapper = JacksMapper.withOptions(CaseClassCheckNulls(true),
-    CaseClassSkipNulls(true), CaseClassRequireKnown(true))
-  private val module = new SimpleModule()
-  module.addSerializer(classOf[FiniteDuration], new FiniteDurationSerializer())
-  module.addDeserializer(classOf[FiniteDuration], new FiniteDurationDeserializer())
-  mapper.mapper.registerModule(module)
+  import CirceSupport.*
 
-  def readValueT[T](c: Config)(implicit m: Manifest[T]) =
+  implicit val finiteDurationEncoder: Encoder[FiniteDuration] = Encoder.encodeString.contramap(_.toString)
+  implicit val finiteDurationDecoder: Decoder[FiniteDuration] = Decoder.decodeString.emap { s =>
+    Duration(s) match {
+      case f: FiniteDuration if f > Duration("0 nanoseconds") => Right(f)
+      case _ => Left("The duration " + s + " is invalid, it must be a positive, non-zero finite duration")
+    }
+  }
+
+  private def wrapParseFailure[T](result: Either[io.circe.Error, T], expanded: => String): T = result match {
+    case Right(t) => t
+    case Left(e) =>
+      throw new JsonMappingException(e.getMessage, e)
+  }
+
+  def readValueT[T](c: Config)(implicit d: Decoder[T]): T =
     withContextLoader(getClass.getClassLoader) {
       val expanded = c.resolve.root.render(ConfigRenderOptions.concise)
-      try {
-        mapper.readValue[T](expanded)
-      } catch {
-        case e: JsonMappingException =>
-          val m2 = try {
-            val margin = 50
-            val len = expanded.length()
-            val offset = e.getLocation().getCharOffset().toInt
-            val (s1, o1) = if (offset > margin) {
-              ("..." + expanded.substring(offset - margin + 3), margin)
-            } else (expanded, offset)
-            val l1 = s1.length()
-            val s2 = if (l1 - o1 > margin) {
-              s1.substring(0, o1 + margin - 3) + "..."
-            } else s1
-            val m1 = "\n" + s2 + "\n" + " " * o1 + "^"
-            if (e.getMessage().startsWith("Can not deserialize instance of java.lang.String"))
-              m1 + "\nA string may have been found in place of an array, somewhere in this object" else m1
-          } catch {
-            case f:Throwable => throw new JsonMappingException("Internal dbuild exception while deserializing; please report.", e)
-          }
-          throw new JsonMappingException(e.getMessage.split("\n")(0) + m2, e.getCause)
-      }
+      wrapParseFailure(parse(expanded).flatMap(_.as[T]), expanded)
     }
-  def readValue[T](f: File)(implicit m: Manifest[T]) = readValueT[T](parseFile(f))
-  def readValue[T](s: String)(implicit m: Manifest[T]) = readValueT[T](parseString(s))
-  def writeValue[T](t: T)(implicit m: Manifest[T]) =
-    withContextLoader(getClass.getClassLoader) { mapper.writeValueAsString[T](t) }
-  def writeValueFormatted[T](t: T)(implicit m: Manifest[T]) =
+  def readValue[T](f: File)(implicit d: Decoder[T]): T = readValueT[T](parseFile(f))
+  def readValue[T](s: String)(implicit d: Decoder[T]): T = readValueT[T](parseString(s))
+  def writeValue[T](t: T)(implicit e: Encoder[T]): String =
+    withContextLoader(getClass.getClassLoader) { e(t).noSpaces }
+  def writeValueFormatted[T](t: T)(implicit e: Encoder[T]): String =
     com.typesafe.config.ConfigFactory.parseString(writeValue(t)).root.render(ConfigRenderOptions.concise.setFormatted(true))
-  def readProperties(f: File) = {
+  def readProperties(f: File): Seq[String] = {
     val config = parseFile(f)
     // do not resolve yet! some needed vars may be in prop files which have not been parsed yet
     // resolve *only* the properties key, in case we are using env vars there
@@ -63,24 +98,17 @@ object Utils {
     } catch {
       case e: Missing => "[]"
     }
-    try {
-      mapper.readValue[SeqString](rendered)
-    } catch {
-      case e:Throwable => throw new JsonMappingException("The \"properties\" section contains unexpected data.", e)
+    parse(rendered).flatMap(_.as[Seq[String]]) match {
+      case Right(v) => v
+      case Left(e)  => throw new JsonMappingException("The \"properties\" section contains unexpected data.", e)
     }
   }
 
-
-  private val mapper2 = JacksMapper
   // specific simplified variant to deal with reading a path from a /possible/ Artifactory response,
   // as well as a possible response from Flowdock
-  def readSomePath[T](s: String)(implicit m: Manifest[T]) =
+  def readSomePath[T](s: String)(implicit d: Decoder[T]): Option[T] =
     withContextLoader(getClass.getClassLoader) {
-      try {
-        Some(mapper2.readValue[T](s))
-      } catch {
-        case e: JsonMappingException => None
-      }
+      parse(s).flatMap(_.as[T]).toOption
     }
 
   // verify whether project/space names are legal

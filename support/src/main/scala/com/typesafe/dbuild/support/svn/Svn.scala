@@ -1,12 +1,12 @@
 package com.typesafe.dbuild.support.svn
 
-import sys.process._
 import _root_.java.io.File
 import _root_.java.net.URI
-import com.typesafe.dbuild.adapter.Adapter.IO
+import _root_.sbt.io.IO
 import com.typesafe.dbuild.logging.Logger
+import com.typesafe.dbuild.support.OS.*
 import com.typesafe.dbuild.support.UriUtil
-import com.typesafe.dbuild.support.OS._
+import sys.process.*
 
 /** A svn runner.  This class exists solely for Scalatest. */
 object Svn {
@@ -16,7 +16,7 @@ object Svn {
   object HasRevision {
     def unapply(in: String): Option[String] =
       (for {
-        Revision(rev) <- (in split "[\r\n]+").view
+        case Revision(rev) <- (in split "[\r\n]+").view
       } yield rev).headOption
   }
   

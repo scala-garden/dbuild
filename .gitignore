@@ -3,6 +3,7 @@ target-*
 __pycache__/
 docs/src/sphinx/version.py
 .bsp
+.claude
 .devcontainer
 .metals
 .vscode

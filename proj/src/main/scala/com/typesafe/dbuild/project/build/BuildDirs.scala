@@ -1,9 +1,8 @@
 package com.typesafe.dbuild.project.build
-import java.io.File
 import com.typesafe.dbuild.repo.core.GlobalDirs.buildDir
-import com.typesafe.dbuild.adapter.Adapter
-import Adapter.Path._
-import Adapter.syntaxio._
+import java.io.File
+import sbt.io.Path.*
+import sbt.io.syntax.*
 
 /**
  * dbuild-specific file names used during building.
@@ -46,7 +45,7 @@ object BuildDirs {
    */
   def localRepos(projectDir: File) = {
     val base = projectDir / dbuildDirName / inArtsDirName
-    Stream.from(0).map { level: Int =>
+    Stream.from(0).map { (level: Int) =>
       val repo = base / (level.toString)
       repo.mkdirs()
       repo

@@ -1,10 +1,9 @@
 package com.typesafe.dbuild.repo.core
 
-import java.io.File
-import com.typesafe.dbuild.adapter.Adapter
 import com.typesafe.dbuild.http.Credentials
-import Adapter.IO
-import Adapter.Path._
+import java.io.File
+import sbt.io.IO
+import sbt.io.Path.*
 
 /** Interface for a repository of raw key-value files. */
 trait ReadableRepository {

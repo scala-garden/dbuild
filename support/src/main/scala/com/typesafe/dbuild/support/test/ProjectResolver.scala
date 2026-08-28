@@ -1,14 +1,14 @@
 package com.typesafe.dbuild.support.test
 
+import _root_.java.net.URI
+import _root_.sbt.io.FileFilter.{ globFilter => toFF }
+import _root_.sbt.io.IO
+import _root_.sbt.io.Path.*
+import _root_.sbt.io.syntax.*
 import com.typesafe.dbuild.logging.Logger
-import com.typesafe.dbuild.model._
+import com.typesafe.dbuild.model.*
 import com.typesafe.dbuild.project.resolve.ProjectResolver
 import java.io.File
-import _root_.java.net.URI
-import com.typesafe.dbuild.adapter.Adapter
-import Adapter.{IO,toFF}
-import Adapter.Path._
-import Adapter.syntaxio._
 
 /**
  * The test resolver does absolutely nothing; however, it fails every now and then (for testing).
@@ -20,7 +20,7 @@ class TestProjectResolver() extends ProjectResolver {
 
   def resolve(config: ProjectBuildConfig, baseDir: File, log: Logger): ProjectBuildConfig = {
     // scrub the whole content before returning
-    IO.delete(baseDir.*(toFF("*")).get)
+    IO.delete(baseDir.*(toFF("*")).get())
 
     val rand = new java.util.Random
     // abort resolution 10% of the times

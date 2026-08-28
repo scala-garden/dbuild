@@ -1,13 +1,12 @@
 package com.typesafe.dbuild.build
 
-import com.typesafe.dbuild.model._
-import com.typesafe.dbuild.logging.Logger
 import com.typesafe.dbuild.deploy.Creds.loadCreds
+import com.typesafe.dbuild.logging.Logger
 import Logger.prepareLogMsg
-import com.typesafe.dbuild.model._
-import java.io.File
+import com.typesafe.dbuild.model.*
+import com.typesafe.dbuild.model.SeqStringH.*
 import com.typesafe.dbuild.repo.core.{ LocalRepoHelper, Repository }
-import com.typesafe.dbuild.model.SeqStringH._
+import java.io.File
 
 /**
  * Defines a task that will run before or after the build, defined somewhere

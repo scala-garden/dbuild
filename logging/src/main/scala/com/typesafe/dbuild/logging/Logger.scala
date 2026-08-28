@@ -1,11 +1,11 @@
 package com.typesafe.dbuild.logging
 
-import scala.sys.process.ProcessLogger
-import sbt.dbuild.hack.DbuildHack.ExceptionCategory
 import com.typesafe.dbuild.graph
-import com.typesafe.dbuild.adapter.{LoggingInterface,StreamLoggerAdapter}
-import LoggingInterface.{Logger=>SbtLogger,BasicLogger=>SbtBasicLogger,_}
-import LoggingInterface.Level._
+import sbt.dbuild.hack.DbuildHack.ExceptionCategory
+import sbt.internal.util.{ BasicLogger => SbtBasicLogger, StackTrace }
+import sbt.util.{ Logger => SbtLogger, LogEvent, ControlEvent, Level }
+import Level.*
+import scala.sys.process.ProcessLogger
 
 trait Logger extends SbtLogger with ProcessLogger {
   def newNestedLogger(name: String, projName: String = ""): Logger
@@ -51,7 +51,7 @@ object ConsoleLogger {
 abstract class BasicLogger extends SbtBasicLogger with Logger
 
 /** Logs to an output stream. */
-final class StreamLogger(out: java.io.PrintStream, debug: Boolean) extends BasicLogger with StreamLoggerAdapter {
+final class StreamLogger(out: java.io.PrintStream, debug: Boolean) extends BasicLogger {
 
   if (debug) setLevel(Debug)
 

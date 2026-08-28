@@ -3,7 +3,7 @@
 // timeout occurs. One wrapper can keep track of only one Process at a time,
 // so there will be usually one wrapper per build/extraction worker.
 package com.typesafe.dbuild.utils
-import sys.process._
+import sys.process.*
 
 class TrackedProcessBuilder {
   var interrupted = false
@@ -65,7 +65,7 @@ class TrackedProcessBuilder {
 }
 
 object TrackedProcessBuilder {
-  val trackers = new scala.collection.mutable.MutableList[TrackedProcessBuilder]
+  val trackers = new scala.collection.mutable.ListBuffer[TrackedProcessBuilder]
 
   def record(t:TrackedProcessBuilder) = synchronized {
     trackers += t

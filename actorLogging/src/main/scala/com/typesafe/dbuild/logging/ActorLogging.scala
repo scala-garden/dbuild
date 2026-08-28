@@ -1,18 +1,18 @@
 package com.typesafe.dbuild.logging
 
-import akka.actor.{ ActorRef, Actor, Props, PoisonPill, Terminated }
-import sbt.io.IO
-import sbt.io.Path._
-import sbt.io.syntax._
-import sbt.util.{ Level, LogEvent, Log, Trace, ControlEvent }
+import org.apache.pekko.actor.{ ActorRef, Actor, Props, PoisonPill, Terminated }
 import sbt.internal.util.StackTrace
+import sbt.io.IO
+import sbt.io.Path.*
+import sbt.io.syntax.*
+import sbt.util.{ Level, LogEvent, Log, Trace, ControlEvent }
 
 /** A command to the logging system to log a given event into a particular path. */
 case class LogCmd(path: String, evt: LogEvent, projName: String)
 
 /** A logger that sends LogCmds to an actor rather than doing anything directly. */
 class ActorLogger(nested: ActorRef, path: String = "root", val projName: String = "") extends Logger {
-import Level._
+import Level.*
   // TODO - Keep a reference of what's enabled locally...
   def newNestedLogger(name: String, projName: String = ""): Logger = {
     new ActorLogger(nested, path + "/" + name, projName)
@@ -163,10 +163,10 @@ class ChainedLoggerSupervisorActor extends Actor {
       val logger = context actorOf p
       context.watch(logger)
       loggers = logger +: loggers
-      sender ! logger
+      sender() ! logger
     case l: LogCmd => loggers foreach (_ forward l)
     case "exit" =>
-      terminationSender = sender
+      terminationSender = sender()
       loggers.foreach { _ ! "exit" }
     case Terminated(p) =>
       if (!(loggers.contains(p)))

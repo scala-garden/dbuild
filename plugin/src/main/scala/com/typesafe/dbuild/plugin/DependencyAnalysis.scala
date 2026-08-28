@@ -1,16 +1,16 @@
 package com.typesafe.dbuild.plugin
 
-import sbt._
+import DBuildRunner.getSortedProjects
 import com.typesafe.dbuild.adapter.Adapter
-import Adapter.syntaxio._
 import Adapter.defaultID
 import com.typesafe.dbuild.model
-import com.typesafe.dbuild.plugin.StateHelpers._
-import com.typesafe.dbuild.support.sbt.ExtractionInput
-import com.typesafe.dbuild.support.NameFixer.fixName
-import DBuildRunner.getSortedProjects
 import com.typesafe.dbuild.model.Utils.{ writeValue, readValue }
+import com.typesafe.dbuild.plugin.StateHelpers.*
+import com.typesafe.dbuild.support.NameFixer.fixName
+import com.typesafe.dbuild.support.sbt.ExtractionInput
 import org.apache.commons.io.FileUtils.writeStringToFile
+import sbt.io.syntax.*
+import sbt.{ *, given }
 
 object DependencyAnalysis {
   // TODO - make a task that generates this metadata and just call it!
@@ -18,12 +18,12 @@ object DependencyAnalysis {
   /** Pulls the name/organization/version for each project in the build. */
   private def getProjectInfos(extracted: Extracted, state: State, refs: Iterable[ProjectRef]): Seq[model.Project] =
     (Vector[model.Project]() /: refs) { (dependencies, ref) =>
-      val name = fixName(extracted.get(Keys.name in ref))
-      val organization = extracted.get(Keys.organization in ref)
+      val name = fixName(extracted.get(ref / Keys.name))
+      val organization = extracted.get(ref / Keys.organization)
 
       // Project dependencies (TODO - Custom task for this...)
-      val (_, pdeps) = extracted.runTask(Keys.projectDependencies in ref, state)
-      val ldeps = extracted.get(Keys.libraryDependencies in ref)
+      val (_, pdeps) = extracted.runTask(ref / Keys.projectDependencies, state)
+      val ldeps = extracted.get(ref / Keys.libraryDependencies)
       def artifactsNoEmpty(name: String, arts: Seq[Artifact]) =
         if (!arts.isEmpty) arts
         else Seq(Artifact(name))
@@ -36,9 +36,9 @@ object DependencyAnalysis {
         model.ProjectRef("scala-compiler", "org.scala-lang", "jar", None)
 
       // Project Artifacts
-      val skipPublish = extracted.runTask(Keys.skip in (ref, Keys.publish), state)._2
+      val skipPublish = extracted.runTask(ref / Keys.publish / Keys.skip, state)._2
       val artifacts = if (skipPublish) Seq[model.ProjectRef]() else for {
-        a <- extracted get (Keys.artifacts in ref)
+        a <- extracted.get(ref / Keys.artifacts)
       } yield model.ProjectRef(fixName(a.name), organization, a.extension, a.classifier)
 
       // Append ourselves to the list of projects...
@@ -79,8 +79,8 @@ object DependencyAnalysis {
   def normalizedProjectNames(r: Seq[ProjectRef], baseDirectory: File) = r map { p => normalizedProjectName(p, baseDirectory) }
 
   /** Do we need to use a specific Scala version during extraction? If so, set it now. */
-  def fixExtractionScalaVersion2(opt: Option[String]): (Seq[Setting[_]], sbt.Logger) => Seq[Setting[_]] = opt match {
-    case None => (a: Seq[Setting[_]], _) => a
+  def fixExtractionScalaVersion2(opt: Option[String]): (Seq[Setting[?]], sbt.Logger) => Seq[Setting[?]] = opt match {
+    case None => (a: Seq[Setting[?]], _) => a
     case Some(v) => DBuildRunner.fixGeneric2(Keys.scalaVersion, "Setting extraction Scala version to " + v) { _ => v }
   }
 
@@ -90,9 +90,9 @@ object DependencyAnalysis {
     val ExtractionInput(projects, excludedProjects, extractionScalaVersion, debug) = extractionInput
 
     val extracted = Project.extract(state)
-    import extracted._
+    import extracted.*
 
-    val Some(baseDirectory) = Keys.baseDirectory in ThisBuild get structure.data
+    val Some(baseDirectory) = (ThisBuild / Keys.baseDirectory).get(structure.data)
     log.debug("Extracting dependencies: " + baseDirectory.getCanonicalPath)
 
     def normalizedProjectNames(r: Seq[ProjectRef]) = DependencyAnalysis.normalizedProjectNames(r, baseDirectory)
@@ -126,7 +126,7 @@ object DependencyAnalysis {
     // this will be the list of ProjectRefs that will actually be built, in the right sequence
     val refs = {
 
-      import com.typesafe.dbuild.graph._
+      import com.typesafe.dbuild.graph.*
       // we need to linearize the list of subprojects. If this is not done,
       // when we try to build one of the (sbt) subprojects, multiple ones can be
       // built at once, which prevents us from finding easily which files are
@@ -144,8 +144,8 @@ object DependencyAnalysis {
       class SubProjGraph(projs: Seq[ProjectRef], directDeps: Map[ProjectRef, Set[ProjectRef]],
         directAggregates: Map[ProjectRef, Set[ProjectRef]]) extends Graph[ProjectRef, DepType] {
         val nodeMap: Map[ProjectRef, Node[ProjectRef]] = (projs map { p => (p, SimpleNode(p)) }).toMap
-        private def wrapEdges(kind: DepType, edges: Map[ProjectRef, Set[ProjectRef]]) = edges map {
-          case (from, to) => (nodeMap(from), to map nodeMap map { SimpleEdge(nodeMap(from), _, kind) } toSeq)
+        private def wrapEdges(kind: DepType, edges: Map[ProjectRef, Set[ProjectRef]]): Map[Node[ProjectRef], Seq[Edge[ProjectRef, DepType]]] = edges map {
+          case (from, to) => (nodeMap(from), (to map nodeMap map { SimpleEdge(nodeMap(from), _, kind) }).toSeq)
         }
         val nodes: Set[Node[ProjectRef]] = nodeMap.values.toSet
         private val edgeMap: Map[Node[ProjectRef], Seq[Edge[ProjectRef, DepType]]] = {
@@ -171,16 +171,16 @@ object DependencyAnalysis {
       // extracted.currentUnit.defined; we consequently scan extracted.structure.allProjects
       // instead (which in theory should contain the same information as allRefs,
       // aka extracted.structure.allProjectRefs).
-      val allProjDeps = (extracted.structure.allProjects map { p =>
+      val allProjDeps: Map[ProjectRef, Set[ProjectRef]] = (extracted.structure.allProjects map { p =>
         (allProjRefsMap(p.id), (extracted.currentUnit.defined.get(p.id) map { rp =>
-          rp.dependencies map { _.project } toSet
+          (rp.dependencies map { _.project }).toSet
         }) getOrElse Set[ProjectRef]())
       }).toMap
 
       // The same, for the "aggregate" relationship (only direct ones, not the transitive set)
-      val allProjAggregates = extracted.structure.allProjects map { p =>
+      val allProjAggregates: Map[ProjectRef, Set[ProjectRef]] = (extracted.structure.allProjects map { p =>
         (allProjRefsMap(p.id), p.aggregate.toSet)
-      } toMap
+      }).toMap
 
       // some debugging won't hurt
       log.info("Dependencies among subprojects:")
@@ -253,7 +253,7 @@ object DependencyAnalysis {
     val deps = getProjectInfos(extracted, state, refs)
 
     // TODO: why only the root version? We might as well grab that of each subproject
-    val Some(version) = Keys.version in currentRef get structure.data
+    val Some(version) = (currentRef / Keys.version).get(structure.data)
     // return just this version string now; we will append to it more stuff prior to building
 
     val meta = model.ProjMeta(version, deps, normalizedProjectNames(refs)) // return the new list of subprojects as well!
@@ -264,11 +264,11 @@ object DependencyAnalysis {
 
   /** called by onLoad() during extraction */
   def printCmd(state: State, previousOnLoad: State => State): State = {
-    import com.typesafe.dbuild.support.sbt.SbtRunner.SbtFileNames._
+    import com.typesafe.dbuild.support.sbt.SbtRunner.SbtFileNames.*
 
     val extracted = Project.extract(state)
-    val Some(baseDirectory) = sbt.Keys.baseDirectory in ThisBuild get extracted.structure.data
-    import Adapter.syntaxio._
+    val Some(baseDirectory) = (ThisBuild / sbt.Keys.baseDirectory).get(extracted.structure.data)
+    import sbt.io.syntax.*
     val dbuildDir = baseDirectory / dbuildSbtDirName
     val resultFile = dbuildDir / extractionOutputFileName
     val inputFile = dbuildDir / extractionInputFileName
@@ -281,8 +281,8 @@ object DependencyAnalysis {
     val log = sbt.ConsoleLogger()
     if (extractionInput.debug) log.setLevel(Level.Debug)
 
-    def prepareExtractionSettings(oldSettings: Seq[Setting[_]]) = {
-      Seq[(Seq[Setting[_]], Logger) => Seq[Setting[_]]](
+    def prepareExtractionSettings(oldSettings: Seq[Setting[?]]) = {
+      Seq[(Seq[Setting[?]], Logger) => Seq[Setting[?]]](
         fixExtractionScalaVersion2(extractionInput.extractionScalaVersion),
         DBuildRunner.restorePreviousOnLoad(previousOnLoad)) flatMap { _(oldSettings, log) }
     }

@@ -1,10 +1,10 @@
 package com.typesafe.dbuild.project
 
-import com.typesafe.dbuild.model._
 import com.typesafe.dbuild.logging.Logger
-import java.io.File
-import com.typesafe.dbuild.adapter.Adapter.Path._
+import com.typesafe.dbuild.model.*
 import com.typesafe.dbuild.utils.TrackedProcessBuilder
+import java.io.File
+import sbt.io.Path.*
 
 case class BuildData(log: Logger, debug: Boolean)
 

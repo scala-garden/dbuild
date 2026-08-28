@@ -1,19 +1,19 @@
 package com.typesafe.dbuild.build
 
-import sbt.io.{ IO, PathFinder }
-import sbt.io.syntax._
-import com.typesafe.dbuild.model._
 import com.typesafe.dbuild.logging.Logger
-import java.io.File
+import com.typesafe.dbuild.model.*
+import com.typesafe.dbuild.model.SeqStringH.*
 import com.typesafe.dbuild.repo.core.{ LocalRepoHelper, Repository }
-import org.apache.commons.io.{ FileUtils, IOUtils }
-import collection.JavaConversions._
-import java.util.jar.JarInputStream
-import java.util.jar.JarFile
-import java.util.jar.JarEntry
+import java.io.File
 import java.io.FileInputStream
+import java.util.jar.JarEntry
+import java.util.jar.JarFile
+import java.util.jar.JarInputStream
+import org.apache.commons.io.{ FileUtils, IOUtils }
 import org.apache.oro.text.regex
-import com.typesafe.dbuild.model.SeqStringH._
+import sbt.io.syntax.*
+import sbt.io.{ IO, PathFinder }
+import scala.jdk.CollectionConverters.*
 
 class Comparison(options: GeneralOptions, log: Logger) extends OptionTask(log) {
   def id = "Comparison"
@@ -32,7 +32,7 @@ class Comparison(options: GeneralOptions, log: Logger) extends OptionTask(log) {
     // we do not run comparison if we reached time out, or if we never arrived past extraction (or both)
     if (outcome.isInstanceOf[TimedOut]) dontRun() else
       optRepBuild match {
-        case None => dontRun
+        case None => dontRun()
         case Some(repBuild) => checkComparison(options, repBuild, outcome, log)
       }
   }
@@ -64,8 +64,8 @@ class Comparison(options: GeneralOptions, log: Logger) extends OptionTask(log) {
               if (badB.isEmpty) {
                 val logLimit = 10
                 // excellent! We just need to compare the jars in dirA and dirB
-                val jarsA = PathFinder(dirA).allPaths.get.filter(_.getName.endsWith(".jar"))
-                val jarsB = PathFinder(dirB).allPaths.get.filter(_.getName.endsWith(".jar"))
+                val jarsA = PathFinder(dirA).allPaths.get().filter(_.getName.endsWith(".jar"))
+                val jarsB = PathFinder(dirB).allPaths.get().filter(_.getName.endsWith(".jar"))
                 def checkPaths(x: Seq[String], y: Seq[String], xName: String, yName: String) = {
                   val xNotY = x.diff(y)
                   val ok = xNotY.isEmpty
@@ -95,10 +95,10 @@ class Comparison(options: GeneralOptions, log: Logger) extends OptionTask(log) {
                 // But globs are a bit easier to use in this context.
                 val skipGlobPatterns = check.skip.map(new org.apache.oro.text.GlobCompiler().compile(_))
                 val matcher = new regex.Perl5Matcher()
-                pathsA.foreach { p: String =>
+                pathsA.foreach { (p: String) =>
                   val fa = new File(dirA, p)
                   val fb = new File(dirB, p)
-                  JarFiles.compareJars(fa, fb, p, { name: String => skipGlobPatterns.exists(matcher.matches(name, _)) }, log, logLimit)
+                  JarFiles.compareJars(fa, fb, p, { (name: String) => skipGlobPatterns.exists(matcher.matches(name, _)) }, log, logLimit)
                 }
                 log.info("Comparison OK.")
               }
@@ -119,14 +119,14 @@ object JarFiles {
   // jarName is some name jar info that will be printed as diagnostic in case of error
   // log is a Logger
   def compareJars(fa: File, fb: File, jarName: String, log: Logger): Unit =
-    compareJars(fa, fb, jarName, { _: String => true }, log, 10)
+    compareJars(fa, fb, jarName, { (_: String) => true }, log, 10)
 
   // additional parameters:
   // within a jar archive, only compare files when their names are not skipped (according to "skip" below)
   // logLimit is a limits on the number of differing elements that will be printed in case of errors
   def compareJars(fa: File, fb: File, jarName: String, skip: String => Boolean, log: Logger, logLimit: Int): Unit = {
     def getEntries(jf: JarFile) = {
-      jf.entries.map { je =>
+      jf.entries.asScala.map { je =>
         val name = je.getName()
         if (je.isDirectory() || skip(name))
           None

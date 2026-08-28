@@ -1,16 +1,16 @@
 package com.typesafe.dbuild.build
 
-import com.typesafe.dbuild.project.BuildSystem
-import com.typesafe.dbuild.support.BuildSystemCore
-import com.typesafe.dbuild.project.resolve.ProjectResolver
-import com.typesafe.dbuild.project.dependencies.TimedExtractorActor
-import com.typesafe.dbuild.project.build.TimedBuildRunnerActor
-import com.typesafe.dbuild.model._
 import com.typesafe.dbuild.logging.Logger
-import akka.actor.{Actor,Props,ActorRef,ActorContext}
-import java.io.File
-import com.typesafe.dbuild.repo.core.Repository
+import com.typesafe.dbuild.model.*
+import com.typesafe.dbuild.project.BuildSystem
+import com.typesafe.dbuild.project.build.TimedBuildRunnerActor
 import com.typesafe.dbuild.project.dependencies.Extractor
+import com.typesafe.dbuild.project.dependencies.TimedExtractorActor
+import com.typesafe.dbuild.project.resolve.ProjectResolver
+import com.typesafe.dbuild.repo.core.Repository
+import com.typesafe.dbuild.support.BuildSystemCore
+import java.io.File
+import org.apache.pekko.actor.{Actor,Props,ActorRef,ActorContext}
 
 case class RunLocalBuild(config: DBuildConfiguration, configName: String, buildTarget: Option[String])
 /**

@@ -1,18 +1,17 @@
 package com.typesafe.dbuild.project.build
 
-import com.typesafe.dbuild.model._
+import BuildDirs.*
 import com.typesafe.dbuild.logging.Logger
-import com.typesafe.dbuild.project.resolve.ProjectResolver
 import Logger.prepareLogMsg
-import java.io.File
-import com.typesafe.dbuild.repo.core._
-import com.typesafe.dbuild.adapter.Adapter
-import Adapter.Path._
-import com.typesafe.dbuild.project.dependencies.Extractor
-import com.typesafe.dbuild.project.cleanup.Recycling.{ updateTimeStamp, markSuccess }
+import com.typesafe.dbuild.model.*
 import com.typesafe.dbuild.project.BuildData
+import com.typesafe.dbuild.project.cleanup.Recycling.{ updateTimeStamp, markSuccess }
+import com.typesafe.dbuild.project.dependencies.Extractor
+import com.typesafe.dbuild.project.resolve.ProjectResolver
+import com.typesafe.dbuild.repo.core.*
 import com.typesafe.dbuild.utils.TrackedProcessBuilder
-import BuildDirs._
+import java.io.File
+import sbt.io.Path.*
 
 /**
  * This class encodes the logic to resolve a project and run its build given
@@ -95,7 +94,7 @@ object LocalBuildRunner {
       a.info.organization == "org.scala-lang" && a.info.name == "scala-library"
     }
     val libVersion = scalaLib flatMap { lib =>
-      if (outProjects exists { p: Project =>
+      if (outProjects exists { (p: Project) =>
         p.organization == "org.scala-lang" && p.name.startsWith("scala")
       }) Some(lib.version) else None
     }

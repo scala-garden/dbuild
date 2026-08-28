@@ -1,16 +1,14 @@
 package com.typesafe.dbuild.repo.core
 
-import java.io.File
-import com.typesafe.dbuild.adapter.Adapter
-import com.typesafe.dbuild.http._
-import Adapter.IO
-import Adapter.Path._
 import com.typesafe.dbuild.adapter.Defaults
-import dispatch.{url => dispUrl, Http}
-import scala.concurrent.ExecutionContext.Implicits.global
-import scala.concurrent._
-import scala.concurrent.duration._
+import com.typesafe.dbuild.http.*
+import java.io.File
 import org.apache.commons.io.{ FileUtils, IOUtils }
+import sbt.io.IO
+import sbt.io.Path.*
+import scala.concurrent.*
+import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.duration.*
 
 /** A cached remote repository. */
 class CachedRemoteReadableRepository(cacheDir: File, uri: String) extends ReadableRepository {
@@ -61,7 +59,7 @@ final class CachedRemoteRepository(cacheDir: File, uri: String, credentials: Cre
 
 /** Helpers for free-form HTTP repositories */
 object Remote {
-  def push(uri: String, file: File, cred: Credentials, timeOut: Duration = 20 minutes): Unit = {
+  def push(uri: String, file: File, cred: Credentials, timeOut: Duration = 20.minutes): Unit = {
     val ht = new HttpTransfer(Defaults.version)
     try {
       ht.upload(uri, file, cred)(println)
@@ -69,7 +67,7 @@ object Remote {
       ht.close()
     }
   }
-  def pull(uri: String, local: File, timeOut: Duration = 20 minutes): Unit = {
+  def pull(uri: String, local: File, timeOut: Duration = 20.minutes): Unit = {
     // Ensure directory exists.
     local.getParentFile.mkdirs()
     val ht = new HttpTransfer(Defaults.version)

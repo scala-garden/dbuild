@@ -1,31 +1,32 @@
 package com.typesafe.dbuild.support.scala
 
-import com.typesafe.dbuild.model._
-import com.typesafe.dbuild.support.BuildSystemCore
-import com.typesafe.dbuild.utils.TrackedProcessBuilder
-import org.apache.commons.io.FilenameUtils
-import org.apache.commons.io.FileUtils
 import _root_.java.io.File
-import com.typesafe.dbuild.adapter.Adapter
-import Adapter.Path._
-import Adapter.{IO,NameFilter,allPaths,toFF}
-import Adapter.IO.relativize
-import Adapter.syntaxio._
+import _root_.sbt.io.FileFilter.{ globFilter => toFF }
+import _root_.sbt.io.IO.relativize
+import _root_.sbt.io.Path.*
+import _root_.sbt.io.syntax.*
+import _root_.sbt.io.{ IO, NameFilter }
+import collection.JavaConverters.*
+import com.typesafe.dbuild.adapter.Adapter.allPaths
 import com.typesafe.dbuild.logging.Logger
-import sys.process._
-import com.typesafe.dbuild.repo.core.LocalRepoHelper
+import com.typesafe.dbuild.model.*
+import com.typesafe.dbuild.model.SeqStringH.*
 import com.typesafe.dbuild.model.Utils.{ writeValue, readValue }
-import com.typesafe.dbuild.project.dependencies.Extractor
-import com.typesafe.dbuild.project.build.LocalBuildRunner
-import com.typesafe.dbuild.project.{ BuildSystem, BuildData }
-import collection.JavaConverters._
-import org.apache.maven.model.{ Model, Dependency }
-import org.apache.maven.model.io.xpp3.{ MavenXpp3Reader, MavenXpp3Writer }
-import org.apache.maven.model.Dependency
-import org.apache.ivy.util.ChecksumHelper
-import com.typesafe.dbuild.support.NameFixer.fixName
 import com.typesafe.dbuild.project.build.BuildDirs.dbuildDirName
-import com.typesafe.dbuild.model.SeqStringH._
+import com.typesafe.dbuild.project.build.LocalBuildRunner
+import com.typesafe.dbuild.project.dependencies.Extractor
+import com.typesafe.dbuild.project.{ BuildSystem, BuildData }
+import com.typesafe.dbuild.repo.core.LocalRepoHelper
+import com.typesafe.dbuild.support.BuildSystemCore
+import com.typesafe.dbuild.support.NameFixer.fixName
+import com.typesafe.dbuild.utils.TrackedProcessBuilder
+import org.apache.commons.io.FileUtils
+import org.apache.commons.io.FilenameUtils
+import org.apache.ivy.util.ChecksumHelper
+import org.apache.maven.model.Dependency
+import org.apache.maven.model.io.xpp3.{ MavenXpp3Reader, MavenXpp3Writer }
+import org.apache.maven.model.{ Model, Dependency }
+import sys.process.*
 
 /** Implementation of the Scala  build system. */
 object ScalaBuildSystem extends BuildSystemCore {
@@ -125,9 +126,9 @@ object ScalaBuildSystem extends BuildSystemCore {
       name: String, org: String): Option[String] =
       getVersion(findArtifact(arts, name, org))
 
-    val debugOptions = if (buildData.debug) Seq("-debug") else Seq.empty
+    val debugOptions: Seq[String] = if (buildData.debug) Seq("-debug") else Seq.empty
 
-    val rewireOptions = if (hasPublishLocal) {
+    val rewireOptions: Seq[String] = if (hasPublishLocal) {
 
       val customScalaVersion = findVersion(input.artifacts.artifacts, "org.scala-lang", "scala-library")
       // "starr.version" currently also applies to scala-compiler and scala-reflect
@@ -174,7 +175,7 @@ object ScalaBuildSystem extends BuildSystemCore {
         ("com.typesafe.akka", "akka-actor", "akka-actor"),
         ("org.scala-lang", "scala-actors-migration", "actors-migration"))
 
-      val extraRewireOptions = (for {
+      val extraRewireOptions: Seq[String] = (for {
         (org, name, prop) <- moduleData
         art <- findArtifact(input.artifacts.artifacts, org, name)
       } yield {
@@ -207,13 +208,14 @@ object ScalaBuildSystem extends BuildSystemCore {
     targets foreach {
       case (target, path) =>
         // erase the content of the private cache before each stage of a build, just in case.
-        IO.delete(localM2repo.*(toFF("*")).get)
+        IO.delete(localM2repo.*(toFF("*")).get())
         val targetDir = path.split("/").foldLeft(dir)(_ / _)
-        tracker.!(Process(Seq("ant", target,
+        val antArgs: Seq[String] = Seq("ant", target,
           "-Dlocal.snapshot.repository=" + localRepo.getAbsolutePath,
           "-Dlocal.release.repository=" + localRepo.getAbsolutePath,
           "-Dmaven.version.number=" + version) ++ rewireOptions ++
-          debugOptions ++ ec.buildOptions, Some(targetDir),
+          debugOptions ++ ec.buildOptions.s
+        tracker.!(Process(antArgs, Some(targetDir),
           // The special and rather unsupported env variable "_JAVA_OPTIONS" is the *only* thing
           // capable to forcibly change user.home in all the jvm invocations therein. Changing only
           // HOME or defining -Duser.home when calling ant, will *still* cause ~/.m2 to be used by ant & maven
@@ -238,7 +240,7 @@ object ScalaBuildSystem extends BuildSystemCore {
       // org-with-dots/name/var/name-ver.pom
       // org-with-dots/name_suff/var/name_suff-ver.pom
       val nameFilter = (toFF(name)) | (toFF((name + "_*")))
-      val potentialDirs = od.*(nameFilter).get
+      val potentialDirs = od.*(nameFilter).get()
       if (potentialDirs.isEmpty) {
         sys.error("Cannot find artifacts dir for: " + modID)
       }
@@ -249,7 +251,7 @@ object ScalaBuildSystem extends BuildSystemCore {
       // let's look for var/nameWithCross-ver.pom
       val SearchPattern = """([^/]*)/([^/]*)-\1.pom""".r
       val crossSuffixesAndVers = potentialDirs.flatMap { d =>
-        allPaths(d).get.filterNot(file => file.isDirectory).map { f =>
+        allPaths(d).get().filterNot(file => file.isDirectory).map { f =>
           val relative = relativize(d, f) getOrElse sys.error("Internal error in relative paths creation. Please report.")
           relative match {
             case SearchPattern(ver, nameAndCross) =>
@@ -281,7 +283,7 @@ object ScalaBuildSystem extends BuildSystemCore {
       // use the list of artifacts as a hint as to which directories should be looked up,
       // but actually scan the dirs rather than using the list of artifacts (there may be
       // additional files like checksums, for instance).
-      artifacts.map(artifactDir(localRepo, _, crossSuffix)).distinct.flatMap { allPaths(_).get }.
+      artifacts.map(artifactDir(localRepo, _, crossSuffix)).distinct.flatMap { allPaths(_).get() }.
         filterNot(file => file.isDirectory || file.getName == "maven-metadata-local.xml").map(f)
     }
 
@@ -377,7 +379,7 @@ object ScalaBuildSystem extends BuildSystemCore {
   }
 
   def antHasTarget(target: String, dir: File) =
-    Process("ant -p", dir).lines.exists(_.startsWith(" " + target + "  "))
+    Process("ant -p", dir).lineStream.exists(_.startsWith(" " + target + "  "))
 
   /** Read version from build.number but fake the rest of the ExtractedBuildMeta.*/
   private def fallbackMeta(baseDir: File): ExtractedBuildMeta = {

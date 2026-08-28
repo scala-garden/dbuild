@@ -1,54 +1,46 @@
 package com.typesafe.dbuild.model
 
-import com.fasterxml.jackson.databind._
-import com.fasterxml.jackson.databind.annotation.JsonSerialize
-import com.fasterxml.jackson.databind.annotation.JsonDeserialize
-import com.lambdaworks.jacks._
-import com.fasterxml.jackson.core.JsonGenerator
-import com.fasterxml.jackson.core.JsonParser
-import com.fasterxml.jackson.annotation.JsonProperty
-import com.fasterxml.jackson.databind.ser.std.StringSerializer
-import com.fasterxml.jackson.databind.ser.impl.StringArraySerializer
-import collection.JavaConverters._
+import CirceDerivationCompat.*
+import CirceSupport.*
 import com.typesafe.dbuild.deploy.DeployTarget
 import com.typesafe.dbuild.hashing
-import scala.concurrent.duration._
+import io.circe.{ Encoder, Decoder, Json, JsonObject }
+import scala.concurrent.duration.*
 
-import SeqBooleanH._
-import SeqDBCH._
-import SeqDepsModifiersH._
-import SeqNotificationH._
-import SeqSelectorElementH._
-import SeqSeqStringH._
-import SeqStringH._
+import SeqBooleanH.*
+import SeqDBCH.*
+import SeqDepsModifiersH.*
+import SeqNotificationH.*
+import SeqSelectorElementH.*
+import SeqSeqStringH.*
+import SeqStringH.*
 /**
  * Metadata about a build.  This is extracted from a config file and contains enough information
  * to further extract information about a build.
  */
-@JsonDeserialize(using = classOf[BuildConfigDeserializer])
 case class ProjectBuildConfig(name: String,
   system: String = "sbt",
   uri: String = "nil",
-  @JsonProperty("set-version") setVersion: Option[String],
+  setVersion: Option[String],
   // if both set-version and set-version-suffix are specified,
   // then set-version will take precedence
-  @JsonProperty("set-version-suffix") setVersionSuffix: Option[String],
+  setVersionSuffix: Option[String],
   deps: SeqDepsModifiers = Seq.empty,
   // the default crossVersion for ProjectBuildConfig is None:
   // that means the values will be taken from the enclosing
   // ProjectOptions record
-  @JsonProperty("cross-version") crossVersion: Option[Seq /*Levels*/ [String]] = None,
+  crossVersion: Option[Seq /*Levels*/ [String]] = None,
   // the default checkMissing None: works in the same manner as crossVersion
-  @JsonProperty("check-missing") checkMissing: Option[Seq /*Levels*/ [Boolean]] = None,
+  checkMissing: Option[Seq /*Levels*/ [Boolean]] = None,
   // the default rewriteOverrides None: works in the same manner as crossVersion
-  @JsonProperty("rewrite-overrides") rewriteOverrides: Option[Seq /*Levels*/ [Boolean]] = None,
-  @JsonProperty("use-jgit") useJGit: Option[Boolean] = None,
+  rewriteOverrides: Option[Seq /*Levels*/ [Boolean]] = None,
+  useJGit: Option[Boolean] = None,
   space: Option[Space] = None,
   extra: Option[ExtraConfig]) {
   // after the initial expansion
   // you can use getExtra() to obtain the extra content
-  def getExtra[T](implicit m: Manifest[T]) = extra match {
-    case Some(t: T) => t
+  def getExtra[T] = extra match {
+    case Some(t: T @unchecked) => t
     case None => sys.error("Internal error: \"extra\" has not been expanded in project " + name + ". Please report.")
     case _ => sys.error("Internal error: \"extra\" has the wrong type in project " + name + ". Please report.")
   }
@@ -106,19 +98,58 @@ object RewriteOverridesDefaults {
   def defaults = Stream.continually(true)
 }
 
-// Do keep the one above and the one below in sync
-private case class ProjectBuildConfigShadow(name: String,
-  system: String = "sbt",
-  uri: String = "nil",
-  @JsonProperty("set-version") setVersion: Option[String],
-  @JsonProperty("set-version-suffix") setVersionSuffix: Option[String],
-  deps: SeqDepsModifiers = Seq.empty,
-  @JsonProperty("cross-version") crossVersion: Option[SeqString /*Levels*/ ] = None,
-  @JsonProperty("check-missing") checkMissing: Option[SeqBoolean /*Levels*/ ] = None,
-  @JsonProperty("rewrite-overrides") rewriteOverrides: Option[SeqBoolean /*Levels*/ ] = None,
-  @JsonProperty("use-jgit") useJGit: Option[Boolean] = None,
+// Used only for decoding: mirrors ProjectBuildConfig, but with "extra" left as raw JSON,
+// since which concrete ExtraConfig subtype it holds depends on the sibling "system" field.
+private case class ProjectBuildConfigRaw(name: String,
+  system: Option[String] = None,
+  uri: Option[String] = None,
+  setVersion: Option[String],
+  setVersionSuffix: Option[String],
+  deps: Option[SeqDepsModifiers] = None,
+  crossVersion: Option[SeqString /*Levels*/ ] = None,
+  checkMissing: Option[SeqBoolean /*Levels*/ ] = None,
+  rewriteOverrides: Option[SeqBoolean /*Levels*/ ] = None,
+  useJGit: Option[Boolean] = None,
   space: Option[Space] = None,
-  extra: JsonNode = null)
+  extra: Option[Json] = None)
+private object ProjectBuildConfigRaw {
+  implicit val decoder: Decoder[ProjectBuildConfigRaw] =
+    renamedDec(
+      "setVersion" -> "set-version",
+      "setVersionSuffix" -> "set-version-suffix",
+      "crossVersion" -> "cross-version",
+      "checkMissing" -> "check-missing",
+      "rewriteOverrides" -> "rewrite-overrides",
+      "useJGit" -> "use-jgit")(deriveDecoder[ProjectBuildConfigRaw])
+}
+
+object ProjectBuildConfig {
+  implicit val projectBuildConfigDecoder: Decoder[ProjectBuildConfig] = Decoder.instance { c =>
+    c.as[ProjectBuildConfigRaw].flatMap { raw =>
+      val system = raw.system.getOrElse("sbt")
+      ExtraConfig.decoderFor(system) match {
+        case None => Left(io.circe.DecodingFailure("Build system \"" + system + "\" is unknown.", c.history))
+        case Some(dec) =>
+          (raw.extra match {
+            case None => Right(None)
+            case Some(json) => dec.decodeJson(json).map(Some(_))
+          }).map { newData =>
+            ProjectBuildConfig(raw.name, system, raw.uri.getOrElse("nil"), raw.setVersion, raw.setVersionSuffix,
+              raw.deps.getOrElse(Nil), raw.crossVersion map { _.s }, raw.checkMissing map { _.s },
+              raw.rewriteOverrides map { _.s }, raw.useJGit, raw.space, newData)
+          }
+      }
+    }
+  }
+  implicit val projectBuildConfigEncoder: Encoder[ProjectBuildConfig] =
+    dropNullValues(renamedEnc(
+      "setVersion" -> "set-version",
+      "setVersionSuffix" -> "set-version-suffix",
+      "crossVersion" -> "cross-version",
+      "checkMissing" -> "check-missing",
+      "rewriteOverrides" -> "rewrite-overrides",
+      "useJGit" -> "use-jgit")(deriveEncoder[ProjectBuildConfig]))
+}
 
 case class DepsModifiers(
   // One or more dependencies, in the form "org#name".
@@ -129,6 +160,10 @@ case class DepsModifiers(
   // These are dependencies as seen by dbuild (as extracted); they are not
   // the actual project's dependencies.
   inject: SeqString = Seq.empty)
+object DepsModifiers {
+  implicit val depsModifiersEncoder: Encoder[DepsModifiers] = deriveEncoder[DepsModifiers]
+  implicit val depsModifiersDecoder: Decoder[DepsModifiers] = deriveDecoder[DepsModifiers]
+}
 
 /**
  * A specification for Spaces, as used by projects.
@@ -157,8 +192,6 @@ case class DepsModifiers(
  * a special space (to which one cannot publish), and which
  * means "do not rewire".
  */
-@JsonDeserialize(using = classOf[SpaceDeserializer])
-@JsonSerialize(using = classOf[SpaceSerializer])
 case class Space(from: Seq /*Levels*/ [String], to: Seq[String]) {
   // We can't place "defaults" in the companion object, otherwise
   // the case class loses its standard facilities. So we place it here instead.
@@ -171,35 +204,24 @@ case class Space(from: Seq /*Levels*/ [String], to: Seq[String]) {
   def fromStream = from.toStream ++ SpaceDefaults.defaults.drop(from.length)
 }
 case class SpaceAux(from: SeqString = Seq.empty, to: SeqString = Seq("default"))
-class SpaceDeserializer extends JsonDeserializer[Space] {
-  override def deserialize(p: JsonParser, ctx: DeserializationContext): Space = {
-    val tf = ctx.getConfig.getTypeFactory()
-    val d = ctx.findContextualValueDeserializer(tf.constructType(classOf[JsonNode]), null)
-    val generic = d.deserialize(p, ctx).asInstanceOf[JsonNode]
-    val jp = generic.traverse()
-    jp.nextToken()
-    def valueAs[T](cls: Class[T]) = {
-      val vd = ctx.findContextualValueDeserializer(tf.constructType(cls), null)
-      cls.cast(vd.deserialize(jp, ctx))
-    }
-    if (generic.isTextual()) {
-      val s = valueAs(classOf[String])
-      new Space(s)
-    } else {
-      val aux = valueAs(classOf[SpaceAux])
-      Space(aux.from, aux.to)
+object SpaceAux {
+  implicit val spaceAuxEncoder: Encoder[SpaceAux] = deriveEncoder[SpaceAux]
+  implicit val spaceAuxDecoder: Decoder[SpaceAux] = deriveDecoder[SpaceAux]
+}
+object Space {
+  implicit val spaceDecoder: Decoder[Space] = Decoder.instance { c =>
+    c.value.asString match {
+      case Some(s) => Right(new Space(s))
+      case None => c.as[SpaceAux].map(aux => Space(aux.from, aux.to))
     }
   }
-}
-class SpaceSerializer extends JsonSerializer[Space] {
-  override def serialize(value: Space, g: JsonGenerator, p: SerializerProvider) {
-    if (value.to.length == 1 && value.to(0) == value.from) {
-      val vs = p.findValueSerializer(classOf[String], null)
-      vs.serialize(value.from, g, p)
-    } else {
-      val vs = p.findValueSerializer(classOf[SpaceAux], null)
-      vs.serialize(SpaceAux(value.from, value.to), g, p)
-    }
+  // Note: in the original Jackson-based serializer, the "single symmetric string" shorthand
+  // was gated on `value.to(0) == value.from` -- comparing a String to a Seq[String], which can
+  // never be true. That branch was therefore always dead, and Space was always written out in
+  // full {from:...,to:...} form. We replicate that observable behavior here (see SpaceDeserializer
+  // for the reverse: reading *does* correctly accept the bare-string shorthand).
+  implicit val spaceEncoder: Encoder[Space] = Encoder.instance { value =>
+    SpaceAux.spaceAuxEncoder(SpaceAux(value.from, value.to))
   }
 }
 
@@ -222,21 +244,20 @@ case class DBuildConfiguration(
   /** The unique SHA for this configuration */
   def uuid = hashing sha1 this
 }
+object DBuildConfiguration {
+  implicit val dBuildConfigurationEncoder: Encoder[DBuildConfiguration] = dropNullValues(deriveEncoder[DBuildConfiguration])
+  implicit val dBuildConfigurationDecoder: Decoder[DBuildConfiguration] = deriveDecoder[DBuildConfiguration]
+}
 
 /* This section is unchecked, and is used prior to deserialization by
  * the Typesafe config library. Its contents are no longer used once we
  * get to deserialization, which is why it is always replaced with an
  * empty record.
  */
-@JsonDeserialize(using = classOf[VarDeserializer])
 case class Vars()
-class VarDeserializer extends JsonDeserializer[Vars] {
-  override def deserialize(p: JsonParser, ctx: DeserializationContext): Vars = {
-    val tf = ctx.getConfig.getTypeFactory()
-    val d = ctx.findContextualValueDeserializer(tf.constructType(classOf[JsonNode]), null)
-    val generic = d.deserialize(p, ctx).asInstanceOf[JsonNode]
-    Vars()
-  }
+object Vars {
+  implicit val varsEncoder: Encoder[Vars] = Encoder.instance(_ => Json.obj())
+  implicit val varsDecoder: Decoder[Vars] = Decoder.instance(_ => Right(Vars()))
 }
 
 /**
@@ -245,7 +266,11 @@ class VarDeserializer extends JsonDeserializer[Vars] {
  */
 case class ExtractionConfig(buildConfig: ProjectBuildConfig) {
   def uuid = hashing sha1 this
-  def extra[T](implicit m: Manifest[T]) = buildConfig.getExtra[T]
+  def extra[T] = buildConfig.getExtra[T]
+}
+object ExtractionConfig {
+  implicit val extractionConfigEncoder: Encoder[ExtractionConfig] = deriveEncoder[ExtractionConfig]
+  implicit val extractionConfigDecoder: Decoder[ExtractionConfig] = deriveDecoder[ExtractionConfig]
 }
 
 /**
@@ -298,34 +323,49 @@ case class ExtractionConfig(buildConfig: ProjectBuildConfig) {
 case class DBuildConfig(projects: Seq[ProjectBuildConfig],
   /* deprecated, see deserializer */
   options: Option[DeprecatedBuildOptions],
-  @JsonProperty("cross-version") crossVersion: SeqString /*Levels*/ = Seq.empty, //all missing values will be "disabled"
+  crossVersion: SeqString /*Levels*/ = Seq.empty, //all missing values will be "disabled"
   // if "standard" (the default), use whatever sbt version is defined by the project. If none is defined, stop and ask for one.
-  @JsonProperty("check-missing") checkMissing: SeqBoolean /*Levels*/ = Seq.empty, //all missing values will be determined
+  checkMissing: SeqBoolean /*Levels*/ = Seq.empty, //all missing values will be determined
   // according to the corresponding value of cross-version: if "standard", then false, else true.
-  @JsonProperty("rewrite-overrides") rewriteOverrides: SeqBoolean /*Levels*/ = Seq.empty, //all missing values will be true
-  @JsonProperty("sbt-version") sbtVersion: String = "standard",
+  rewriteOverrides: SeqBoolean /*Levels*/ = Seq.empty, //all missing values will be true
+  sbtVersion: String = "standard",
   // This option applies to all sbt-based projects, unless overridden.
   // see SbtExtraConfig for details.
-  @JsonProperty("extraction-version") extractionVersion: String = "standard",
+  extractionVersion: String = "standard",
   // Select jgit rather than the command-line git. It is in the BuildOptions,
   // rather than in the GeneralOptions, as its value may conceivably have
   // an effect on building (for instance due to a difference in checkout because
   // of an implementation bug)
-  @JsonProperty("use-jgit") useJGit: Boolean = false,
+  useJGit: Boolean = false,
   // settings for sbt-based builds
   // Note on the default value: it must contain a single empty SeqString. Using as a
   // default value an empty Seq[SeqString] will result in the value obtained after
   // serialization and deserialization to be different, which causes troubles when
   // checking repository consistency.
-  @JsonProperty("sbt-settings") sbtSettings: SeqSeqString /* Levels */ = SeqSeqString(Seq(Seq.empty)),
+  sbtSettings: SeqSeqString /* Levels */ = SeqSeqString(Seq(Seq.empty)),
   // commands for sbt-based builds
-  @JsonProperty("sbt-commands") sbtCommands: SeqString = Seq.empty,
+  sbtCommands: SeqString = Seq.empty,
   // commands for sbt-based builds, to be run after compilation and test
-  @JsonProperty("sbt-post-commands") sbtPostCommands: SeqString = Seq.empty,
+  sbtPostCommands: SeqString = Seq.empty,
   // see javaOptions in SbtExtraConfig
-  @JsonProperty("sbt-java-options") sbtJavaOptions: Option[SeqString] = None,
+  sbtJavaOptions: Option[SeqString] = None,
   // Default space for regular project
   space: Space = new Space("default")) extends BuildOptions
+object DBuildConfig {
+  private val renames: Seq[(String, String)] = Seq(
+    "crossVersion" -> "cross-version",
+    "checkMissing" -> "check-missing",
+    "rewriteOverrides" -> "rewrite-overrides",
+    "sbtVersion" -> "sbt-version",
+    "extractionVersion" -> "extraction-version",
+    "useJGit" -> "use-jgit",
+    "sbtSettings" -> "sbt-settings",
+    "sbtCommands" -> "sbt-commands",
+    "sbtPostCommands" -> "sbt-post-commands",
+    "sbtJavaOptions" -> "sbt-java-options")
+  implicit val dBuildConfigEncoder: Encoder[DBuildConfig] = dropNullValues(renamedEnc(renames: _*)(deriveEncoder[DBuildConfig]))
+  implicit val dBuildConfigDecoder: Decoder[DBuildConfig] = renamedDec(renames: _*)(deriveDecoder[DBuildConfig])
+}
 
 /**
  * General options for dbuild, that do not affect the actual build.
@@ -337,11 +377,19 @@ case class GeneralOptions(deploy: Seq[DeployOptions] = Seq.empty,
   cleanup: CleanupOptions = CleanupOptions(),
   timeouts: Timeouts = Timeouts()
 )
+object GeneralOptions {
+  implicit val generalOptionsEncoder: Encoder[GeneralOptions] = deriveEncoder[GeneralOptions]
+  implicit val generalOptionsDecoder: Decoder[GeneralOptions] = deriveDecoder[GeneralOptions]
+}
 
 // expiration times are in hours. Dirs are cleaned if the (truncated)
 // number of hours between now and the time in which a build was last
-// attempted (the initial time) is >= than the number specified here 
+// attempted (the initial time) is >= than the number specified here
 case class CleanupExpirations(success: Int, failure: Int)
+object CleanupExpirations {
+  implicit val cleanupExpirationsEncoder: Encoder[CleanupExpirations] = deriveEncoder[CleanupExpirations]
+  implicit val cleanupExpirationsDecoder: Decoder[CleanupExpirations] = deriveDecoder[CleanupExpirations]
+}
 /**
  * The default maximum ages before reclaiming disk space are:
  * - successful build: 2 days
@@ -352,14 +400,16 @@ case class CleanupExpirations(success: Int, failure: Int)
 case class CleanupOptions(
   build: CleanupExpirations = CleanupExpirations(success = 48, failure = 168),
   extraction: CleanupExpirations = CleanupExpirations(success = 120, failure = 168))
+object CleanupOptions {
+  implicit val cleanupOptionsEncoder: Encoder[CleanupOptions] = deriveEncoder[CleanupOptions]
+  implicit val cleanupOptionsDecoder: Decoder[CleanupOptions] = deriveDecoder[CleanupOptions]
+}
 
 /**
  * This class acts as a useful wrapper for parameters that are Seqs of Strings: it makes it
  * possible to specify a simple string whenever an array of strings is expected in the JSON file.
  * Quite handy, really.
  */
-@JsonSerialize(using = classOf[SeqStringSerializer])
-@JsonDeserialize(using = classOf[SeqStringDeserializer])
 case class SeqString(override val s: Seq[String]) extends Flex[String](s) {
   // whenever I use a SeqString to apply map or foreach, the implicit
   // will kick in. However, when I try to print or use it as a string,
@@ -368,8 +418,10 @@ case class SeqString(override val s: Seq[String]) extends Flex[String](s) {
   // but, just in case:
   override def toString() = s.toString
 }
-class SeqStringDeserializer extends SeqFlexDeserializer[String, SeqString]
-class SeqStringSerializer extends SeqFlexSerializer[String]
+object SeqString {
+  implicit val seqStringEncoder: Encoder[SeqString] = flexEncoder[String](Encoder.encodeString).contramap(_.s)
+  implicit val seqStringDecoder: Decoder[SeqString] = flexDecoder[String](Decoder.decodeString).map(SeqString(_))
+}
 object SeqStringH {
   implicit def SeqToSeqString(s: Seq[String]): SeqString = SeqString(s)
   implicit def SeqStringToSeq(a: SeqString): Seq[String] = a.s
@@ -378,13 +430,13 @@ object SeqStringH {
 /**
  * Similar to the above, but for Booleans.
  */
-@JsonSerialize(using = classOf[SeqBooleanSerializer])
-@JsonDeserialize(using = classOf[SeqBooleanDeserializer])
 case class SeqBoolean(override val s: Seq[Boolean]) extends Flex[Boolean](s) {
   override def toString() = s.toString
 }
-class SeqBooleanDeserializer extends SeqFlexDeserializer[Boolean, SeqBoolean]
-class SeqBooleanSerializer extends SeqFlexSerializer[Boolean]
+object SeqBoolean {
+  implicit val seqBooleanEncoder: Encoder[SeqBoolean] = flexEncoder[Boolean](Encoder.encodeBoolean).contramap(_.s)
+  implicit val seqBooleanDecoder: Decoder[SeqBoolean] = flexDecoder[Boolean](Decoder.decodeBoolean).map(SeqBoolean(_))
+}
 object SeqBooleanH {
   implicit def SeqToSeqBoolean(s: Seq[Boolean]): SeqBoolean = SeqBoolean(s)
   implicit def SeqBooleanToSeq(a: SeqBoolean): Seq[Boolean] = a.s
@@ -394,11 +446,11 @@ object SeqBooleanH {
  * Similar to the above, but for DBuildConfig elements:
  * a single one in the config file will automatically be turned into an array.
  */
-@JsonSerialize(using = classOf[SeqDBCSerializer])
-@JsonDeserialize(using = classOf[SeqDBCDeserializer])
 case class SeqDBC(override val s: Seq[DBuildConfig]) extends Flex[DBuildConfig](s)
-class SeqDBCDeserializer extends SeqFlexDeserializer[DBuildConfig, SeqDBC]
-class SeqDBCSerializer extends SeqFlexSerializer[DBuildConfig]
+object SeqDBC {
+  implicit val seqDBCEncoder: Encoder[SeqDBC] = flexEncoder[DBuildConfig](DBuildConfig.dBuildConfigEncoder).contramap(_.s)
+  implicit val seqDBCDecoder: Decoder[SeqDBC] = flexDecoder[DBuildConfig](DBuildConfig.dBuildConfigDecoder).map(SeqDBC(_))
+}
 object SeqDBCH {
   implicit def SeqToSeqDBC(s: Seq[DBuildConfig]): SeqDBC = SeqDBC(s)
   implicit def SeqDBCToSeq(a: SeqDBC): Seq[DBuildConfig] = a.s
@@ -407,11 +459,11 @@ object SeqDBCH {
 /**
  * For DepsModifiers, we can have one modifier per level, for sbt specifically.
  */
-@JsonSerialize(using = classOf[SeqDMSerializer])
-@JsonDeserialize(using = classOf[SeqDMDeserializer])
 case class SeqDepsModifiers(override val s: Seq[DepsModifiers]) extends Flex[DepsModifiers](s)
-class SeqDMDeserializer extends SeqFlexDeserializer[DepsModifiers, SeqDepsModifiers]
-class SeqDMSerializer extends SeqFlexSerializer[DepsModifiers]
+object SeqDepsModifiers {
+  implicit val seqDepsModifiersEncoder: Encoder[SeqDepsModifiers] = flexEncoder[DepsModifiers](DepsModifiers.depsModifiersEncoder).contramap(_.s)
+  implicit val seqDepsModifiersDecoder: Decoder[SeqDepsModifiers] = flexDecoder[DepsModifiers](DepsModifiers.depsModifiersDecoder).map(SeqDepsModifiers(_))
+}
 object SeqDepsModifiersH {
   implicit def SeqToSeqDM(s: Seq[DepsModifiers]): SeqDepsModifiers = SeqDepsModifiers(s)
   implicit def SeqDMToSeq(a: SeqDepsModifiers): Seq[DepsModifiers] = a.s
@@ -424,8 +476,6 @@ object SeqDepsModifiersH {
  * or directly an array of array of Strings (which becomes directly a Seq(Seq())).
  * It is only used by sbtSettings, currently.
  */
-@JsonSerialize(using = classOf[SeqSeqStringSerializer])
-@JsonDeserialize(using = classOf[SeqSeqStringDeserializer])
 case class SeqSeqString(override val s: Seq[SeqString]) extends Flex[SeqString](s) {
   // turn the SeqSeqString into a Seq[Seq[String]]
   def expand = s map {_.s}
@@ -435,7 +485,7 @@ object SeqSeqStringH {
   implicit def SeqSeqStringToSeq(a: SeqSeqString): Seq[SeqString] = a.s
 }
 
-// Note: it is not enough to extends SeqFlexSerializer[SeqString].
+// Note: it is not enough to encode/decode as a plain Flex[SeqString].
 // For instance, in the case in which the object to be deserialized
 // is SeqSeqString(List(List(aaa), List(bbb))), just deserializing
 // using Flex would lead to a List of two SeqString, which would
@@ -446,45 +496,30 @@ object SeqSeqStringH {
 // more than one element, we skip the SeqString and convert it
 // directly to a Seq[Seq[String]], which is then deserialized
 // into the JSON representation [["aaa"],["bbb"]].
-class SeqSeqStringSerializer extends JsonSerializer[SeqSeqString] {
-  override def serialize(value: SeqSeqString, g: JsonGenerator, p: SerializerProvider) {
+object SeqSeqString {
+  implicit val seqSeqStringEncoder: Encoder[SeqSeqString] = Encoder.instance { value =>
     value.s.length match {
-      case 1 =>
-        val vs = p.findValueSerializer(classOf[SeqString], null)
-        vs.serialize(value.s(0), g, p)
-      case _ =>
-        val vs = p.findValueSerializer(classOf[Seq[Seq[String]]], null)
-        vs.serialize(value.s map {_.s}, g, p)
+      case 1 => SeqString.seqStringEncoder(value.s(0))
+      case _ => Json.arr(value.s.map(ss => flexEncoder[String](Encoder.encodeString)(ss.s)): _*)
     }
   }
-}
-
-// Flex cannot cope with the special case of SeqSeqString deserialization; we write a custom one.
-class SeqSeqStringDeserializer extends JsonDeserializer[SeqSeqString] {
-  override def deserialize(p: JsonParser, ctx: DeserializationContext): SeqSeqString = {
-    val tf = ctx.getConfig.getTypeFactory()
-    val d = ctx.findContextualValueDeserializer(tf.constructType(classOf[JsonNode]), null)
-    val generic = d.deserialize(p, ctx).asInstanceOf[JsonNode]
-    val jp = generic.traverse()
-    jp.nextToken()
-    def valueAs[T](cls: Class[T]) = {
-      val vd = ctx.findContextualValueDeserializer(tf.constructType(cls), null)
-      cls.cast(vd.deserialize(jp, ctx))
-    }
-    // If generic is already an array of arrays, do not wrap, else wrap;
-    // since we might have stuff like [ x, [ y,z ]], we need to traverse
-    // the whole generic to look for arrays of arrays.
-    val needsWrapping = if (generic.isArray()) {
-      !generic.iterator().asScala.exists(_.isArray)
-    } else {
-      true
-    }
-    if (needsWrapping) {
-      SeqSeqString(Seq(valueAs(classOf[SeqString])))
-    } else {
-      // this valueAs() will return a WrappedArray; with the latest sha fixes,
-      // it should have the same sha as a default Seq (a List)
-      SeqSeqString(valueAs(classOf[Array[SeqString]]))
+  // Flex cannot cope with the special case of SeqSeqString deserialization; we write a custom one.
+  implicit val seqSeqStringDecoder: Decoder[SeqSeqString] = Decoder.instance { c =>
+    c.value.asArray match {
+      case Some(arr) =>
+        // If generic is already an array of arrays, do not wrap, else wrap;
+        // since we might have stuff like [ x, [ y,z ]], we need to traverse
+        // the whole generic to look for arrays of arrays.
+        val needsWrapping = !arr.exists(_.isArray)
+        if (needsWrapping) {
+          c.as[SeqString].map(ss => SeqSeqString(Seq(ss)))
+        } else {
+          arr.foldLeft(Right(Vector.empty): Decoder.Result[Vector[SeqString]]) { (acc, j) =>
+            for { v <- acc; s <- flexDecoder[String](Decoder.decodeString).decodeJson(j) } yield v :+ SeqString(s)
+          }.map(v => SeqSeqString(v.toSeq))
+        }
+      case None =>
+        c.as[SeqString].map(ss => SeqSeqString(Seq(ss)))
     }
   }
 }
@@ -493,39 +528,6 @@ class SeqSeqStringDeserializer extends JsonDeserializer[SeqSeqString] {
  * The generic auto-wrapping magic
  */
 class Flex[T](val s: Seq[T])
-class SeqFlexDeserializer[T, ST <: Flex[T]](implicit m: Manifest[T], ms: Manifest[ST]) extends JsonDeserializer[ST] {
-  override def deserialize(p: JsonParser, ctx: DeserializationContext): ST = {
-    val tf = ctx.getConfig.getTypeFactory()
-    val d = ctx.findContextualValueDeserializer(tf.constructType(classOf[JsonNode]), null)
-    val generic = d.deserialize(p, ctx).asInstanceOf[JsonNode]
-    val jp = generic.traverse()
-    jp.nextToken()
-    def valueAs[T](cls: Class[T])(implicit m: Manifest[T]) = {
-      val vd = ctx.findContextualValueDeserializer(tf.constructType(cls), null)
-      vd.deserialize(jp, ctx).asInstanceOf[T]
-    }
-    val constructor = ms.erasure.asInstanceOf[Class[ST]].getConstructor(classOf[Seq[T]])
-    if (generic.isArray()) {
-      // The valueAs() returns an Array; we use its values to build a new Seq.
-      constructor.newInstance(Seq(valueAs(m.arrayManifest.erasure.asInstanceOf[Class[Array[T]]]): _*))
-    } else {
-      // Retrieve the single value, and wrap it into a Seq()
-      constructor.newInstance(Seq(valueAs[T](m.erasure.asInstanceOf[Class[T]])))
-    }
-  }
-}
-class SeqFlexSerializer[T](implicit m: Manifest[T]) extends JsonSerializer[Flex[T]] {
-  override def serialize(value: Flex[T], g: JsonGenerator, p: SerializerProvider) {
-    value.s.length match {
-      case 1 =>
-        val vs = p.findValueSerializer(m.erasure.asInstanceOf[Class[T]], null)
-        vs.serialize(value.s(0).asInstanceOf[AnyRef], g, p)
-      case _ =>
-        val vs = p.findValueSerializer(m.arrayManifest.erasure.asInstanceOf[Class[Array[T]]], null)
-        vs.serialize(value.s.toArray, g, p)
-    }
-  }
-}
 
 /** Deploy information. */
 case class DeployOptions(
@@ -539,8 +541,16 @@ case class DeployOptions(
   sign: Option[DeploySignOptions],
   /** index generation options */
   index: Option[IndexOptions]) extends DeployTarget
+object DeployOptions {
+  implicit val deployOptionsEncoder: Encoder[DeployOptions] = dropNullValues(deriveEncoder[DeployOptions])
+  implicit val deployOptionsDecoder: Decoder[DeployOptions] = deriveDecoder[DeployOptions]
+}
 /** used to select subprojects from one project */
 case class SubProjects(from: String, subprojects: SeqString)
+object SubProjects {
+  implicit val subProjectsEncoder: Encoder[SubProjects] = deriveEncoder[SubProjects]
+  implicit val subProjectsDecoder: Decoder[SubProjects] = deriveDecoder[SubProjects]
+}
 
 /**
  * Signing options.
@@ -549,9 +559,15 @@ case class SubProjects(from: String, subprojects: SeqString)
  *  passphrase is the path to the file containing the passphrase; there is no interactive option.
  */
 case class DeploySignOptions(
-  @JsonProperty("secret-ring") secretRing: Option[String],
+  secretRing: Option[String],
   id: Option[String],
   passphrase: String)
+object DeploySignOptions {
+  implicit val deploySignOptionsEncoder: Encoder[DeploySignOptions] =
+    dropNullValues(renamedEnc("secretRing" -> "secret-ring")(deriveEncoder[DeploySignOptions]))
+  implicit val deploySignOptionsDecoder: Decoder[DeploySignOptions] =
+    renamedDec("secretRing" -> "secret-ring")(deriveDecoder[DeploySignOptions])
+}
 
 /**
  * Index generation options.
@@ -568,6 +584,10 @@ case class IndexOptions(
   /** path to the credentials file */
   credentials: Option[String],
   filename: String) extends DeployTarget
+object IndexOptions {
+  implicit val indexOptionsEncoder: Encoder[IndexOptions] = dropNullValues(deriveEncoder[IndexOptions])
+  implicit val indexOptionsDecoder: Decoder[IndexOptions] = deriveDecoder[IndexOptions]
+}
 
 /** Comparison information. */
 case class ComparisonOptions(
@@ -575,51 +595,40 @@ case class ComparisonOptions(
   b: SeqSelectorElement = Seq(),
   skip: SeqString = Seq()) // skip is a sequence of regex patterns,
 // files inside the jars whose name match them will not be compared.
+object ComparisonOptions {
+  implicit val comparisonOptionsEncoder: Encoder[ComparisonOptions] = deriveEncoder[ComparisonOptions]
+  implicit val comparisonOptionsDecoder: Decoder[ComparisonOptions] = deriveDecoder[ComparisonOptions]
+}
 
 /**
  * Configuration used for SBT and other builds.
  */
-@JsonSerialize(using = classOf[ExtraSerializer])
 class ExtraConfig
 
-class ExtraSerializer extends JsonSerializer[ExtraConfig] {
-  override def serialize(value: ExtraConfig, g: JsonGenerator, p: SerializerProvider) {
-    val cfg = p.getConfig()
-    val tf = cfg.getTypeFactory()
-    val jt = tf.constructType(value.getClass)
-    ScalaTypeSig(cfg.getTypeFactory, jt) match {
-      case Some(sts) if sts.isCaseClass =>
-        // the "true" below is for options.caseClassSkipNulls
-        (new CaseClassSerializer(jt, sts.annotatedAccessors(cfg), true)).serialize(value.asInstanceOf[Product], g, p)
-      case _ => throw new Exception("Internal error while serializing build system config. Please report.")
-    }
+object ExtraConfig {
+  private val decoders: Map[String, Decoder[? <: ExtraConfig]] = Map(
+    "sbt" -> Decoder[SbtExtraConfig],
+    "scala" -> Decoder[ScalaExtraConfig],
+    "ivy" -> Decoder[IvyExtraConfig],
+    "assemble" -> Decoder[AssembleExtraConfig],
+    "aether" -> Decoder[AetherExtraConfig],
+    "test" -> Decoder[TestExtraConfig],
+    "nil" -> Decoder[NilExtraConfig])
+  def decoderFor(system: String): Option[Decoder[ExtraConfig]] =
+    decoders.get(system).map(_.asInstanceOf[Decoder[ExtraConfig]])
+
+  implicit val extraConfigEncoder: Encoder[ExtraConfig] = Encoder.instance {
+    case e: SbtExtraConfig      => ExtraConfigEncoders.sbtExtraConfigEncoder(e)
+    case e: ScalaExtraConfig    => ExtraConfigEncoders.scalaExtraConfigEncoder(e)
+    case e: IvyExtraConfig      => ExtraConfigEncoders.ivyExtraConfigEncoder(e)
+    case e: AssembleExtraConfig => ExtraConfigEncoders.assembleExtraConfigEncoder(e)
+    case e: AetherExtraConfig   => ExtraConfigEncoders.aetherExtraConfigEncoder(e)
+    case e: TestExtraConfig     => ExtraConfigEncoders.testExtraConfigEncoder(e)
+    case e: NilExtraConfig      => ExtraConfigEncoders.nilExtraConfigEncoder(e)
+    case other => throw new Exception("Internal error while serializing build system config. Please report. (" + other.getClass + ")")
   }
 }
 
-class BuildConfigDeserializer extends JsonDeserializer[ProjectBuildConfig] {
-  override def deserialize(p: JsonParser, ctx: DeserializationContext): ProjectBuildConfig = {
-    val buildSystems = BuildSystemExtras.buildSystems
-
-    val tf = ctx.getConfig.getTypeFactory()
-    val d = ctx.findContextualValueDeserializer(tf.constructType(classOf[ProjectBuildConfigShadow]), null)
-    val generic = d.deserialize(p, ctx).asInstanceOf[ProjectBuildConfigShadow]
-
-    if (generic == null) throw new Exception("Cannot deserialize build configuration: no value found")
-
-    val from = generic.extra
-    val system = generic.system
-    if (!(buildSystems.contains(system))) throw new Exception("Build system \"" + system + "\" is unknown.")
-    val newData = if (from == null) None else Some({
-      val cls = buildSystems(system)
-      val jp = from.traverse()
-      jp.nextToken()
-      cls.cast(ctx.findContextualValueDeserializer(tf.constructType(cls), null).deserialize(jp, ctx))
-    })
-    ProjectBuildConfig(generic.name, system, generic.uri, generic.setVersion, generic.setVersionSuffix,
-      generic.deps, generic.crossVersion map { _.s }, generic.checkMissing map { _.s },
-      generic.rewriteOverrides map { _.s }, generic.useJGit, generic.space, newData)
-  }
-}
 /**
  * The 'extra' options for the Scala build system are:
  * build-number:  Overwrites the standard build.number, with a custom number
@@ -639,64 +648,72 @@ class BuildConfigDeserializer extends JsonDeserializer[ProjectBuildConfig] {
  * All fields are optional.
  */
 case class ScalaExtraConfig(
-  @JsonProperty("build-number") buildNumber: Option[BuildNumber],
+  buildNumber: Option[BuildNumber],
   // deploy-target and build-target have been replaced by "targets"
-  @JsonProperty("build-target") buildTarget: Option[String],
-  @JsonProperty("deploy-target") deployTarget: Option[String],
+  buildTarget: Option[String],
+  deployTarget: Option[String],
   // TODO: eventually remove the two old options above
   // "targets" is a list of pairs, where the first component is the target
   // and the second is the path relative to the root where the target should be run
   targets: Seq[(String, String)] = Seq.empty,
-  @JsonProperty("build-options") buildOptions: SeqString = Seq.empty,
+  buildOptions: SeqString = Seq.empty,
   exclude: SeqString = Seq.empty // if empty -> exclude no projects (default)
   ) extends ExtraConfig
 
 case class BuildNumber(major: String, minor: String, patch: String, bnum: String)
+object BuildNumber {
+  implicit val buildNumberEncoder: Encoder[BuildNumber] = deriveEncoder[BuildNumber]
+  implicit val buildNumberDecoder: Decoder[BuildNumber] = deriveDecoder[BuildNumber]
+}
 
 case class IvyExtraConfig(
   sources: Boolean = false,
   javadoc: Boolean = false,
-  @JsonProperty("main-jar") mainJar: Boolean = true,
+  mainJar: Boolean = true,
   artifacts: Seq[IvyArtifact] = Seq.empty,
   // The snapshot marker is used internally by the Ivy build system
   // in order to distinguish among different snapshots of the same
   // dependency, in which case it contains the publication date.
   // Note: this field is not for use by end user.
-  @JsonProperty("snapshot-marker") snapshotMarker: Option[String]) extends ExtraConfig
+  snapshotMarker: Option[String]) extends ExtraConfig
 
 case class AetherExtraConfig(
   sources: Boolean = false,
   javadoc: Boolean = false,
-  @JsonProperty("main-jar") mainJar: Boolean = true,
-  @JsonProperty("snapshot-marker") snapshotMarker: Option[String]) extends ExtraConfig
+  mainJar: Boolean = true,
+  snapshotMarker: Option[String]) extends ExtraConfig
 
 case class IvyArtifact(
   classifier: String = "",
-  @JsonProperty("type") typ: String = "jar",
+  typ: String = "jar",
   ext: String = "jar",
   configs: SeqString = Seq("default"))
+object IvyArtifact {
+  implicit val ivyArtifactEncoder: Encoder[IvyArtifact] = renamedEnc("typ" -> "type")(deriveEncoder[IvyArtifact])
+  implicit val ivyArtifactDecoder: Decoder[IvyArtifact] = renamedDec("typ" -> "type")(deriveDecoder[IvyArtifact])
+}
 
 /**
  * sbt-specific build parameters
  */
 case class SbtExtraConfig(
   // None is interpreted as default: use build.sbt-version
-  @JsonProperty("sbt-version") sbtVersion: Option[String] = None,
+  sbtVersion: Option[String] = None,
   directory: String = "",
-  @JsonProperty("run-tests") runTests: Boolean = true,
-  @JsonProperty("skip-missing-tests") skipMissingTests: Boolean = false,
-  @JsonProperty("test-tasks") testTasks: SeqString = Seq("test"),
+  runTests: Boolean = true,
+  skipMissingTests: Boolean = false,
+  testTasks: SeqString = Seq("test"),
   // For the difference between the build section's "javaOptions",
   // the project-specific "options", and javaAllOptions (below),
   // please refer to SbtBuildSystem.expandExtra()
   options: SeqString = Seq.empty,
-  @JsonProperty("project-specific-all-java-options-combined") javaAllOptions: SeqString = Seq.empty,
+  javaAllOptions: SeqString = Seq.empty,
   // before rewiring, append these settings
   settings: SeqSeqString = SeqSeqString(Seq(Seq.empty)), /*Levels*/
   // before building, run these commands ("set" or others)
   commands: SeqString = Seq.empty,
   // after building and testing, run these commands
-  @JsonProperty("post-commands") postCommands: SeqString = Seq.empty,
+  postCommands: SeqString = Seq.empty,
   projects: SeqString = Seq.empty, // if empty -> build all projects (default)
   exclude: SeqString = Seq.empty, // if empty -> exclude no projects (default)
   /**
@@ -704,10 +721,65 @@ case class SbtExtraConfig(
    *  or a version string to force a different Scala compiler.
    */
   // None is interpreted as default: use build.extraction-version
-  @JsonProperty("extraction-version") extractionVersion: Option[String] = None) extends ExtraConfig
+  extractionVersion: Option[String] = None) extends ExtraConfig
+
+private object ExtraConfigEncoders {
+  val scalaExtraConfigRenames: Seq[(String, String)] = Seq(
+    "buildNumber" -> "build-number", "buildTarget" -> "build-target",
+    "deployTarget" -> "deploy-target", "buildOptions" -> "build-options")
+  implicit val scalaExtraConfigEncoder: Encoder[ScalaExtraConfig] =
+    dropNullValues(renamedEnc(scalaExtraConfigRenames: _*)(deriveEncoder[ScalaExtraConfig]))
+  implicit val scalaExtraConfigDecoder: Decoder[ScalaExtraConfig] =
+    renamedDec(scalaExtraConfigRenames: _*)(deriveDecoder[ScalaExtraConfig])
+
+  implicit val ivyExtraConfigEncoder: Encoder[IvyExtraConfig] =
+    dropNullValues(renamedEnc("mainJar" -> "main-jar", "snapshotMarker" -> "snapshot-marker")(deriveEncoder[IvyExtraConfig]))
+  implicit val ivyExtraConfigDecoder: Decoder[IvyExtraConfig] =
+    renamedDec("mainJar" -> "main-jar", "snapshotMarker" -> "snapshot-marker")(deriveDecoder[IvyExtraConfig])
+
+  implicit val aetherExtraConfigEncoder: Encoder[AetherExtraConfig] =
+    dropNullValues(renamedEnc("mainJar" -> "main-jar", "snapshotMarker" -> "snapshot-marker")(deriveEncoder[AetherExtraConfig]))
+  implicit val aetherExtraConfigDecoder: Decoder[AetherExtraConfig] =
+    renamedDec("mainJar" -> "main-jar", "snapshotMarker" -> "snapshot-marker")(deriveDecoder[AetherExtraConfig])
+
+  val sbtExtraConfigRenames: Seq[(String, String)] = Seq(
+    "sbtVersion" -> "sbt-version", "runTests" -> "run-tests",
+    "skipMissingTests" -> "skip-missing-tests", "testTasks" -> "test-tasks",
+    "javaAllOptions" -> "project-specific-all-java-options-combined",
+    "postCommands" -> "post-commands", "extractionVersion" -> "extraction-version")
+  implicit val sbtExtraConfigEncoder: Encoder[SbtExtraConfig] =
+    dropNullValues(renamedEnc(sbtExtraConfigRenames: _*)(deriveEncoder[SbtExtraConfig]))
+  implicit val sbtExtraConfigDecoder: Decoder[SbtExtraConfig] =
+    renamedDec(sbtExtraConfigRenames: _*)(deriveDecoder[SbtExtraConfig])
+
+  implicit val nilExtraConfigEncoder: Encoder[NilExtraConfig] = deriveEncoder[NilExtraConfig]
+  implicit val nilExtraConfigDecoder: Decoder[NilExtraConfig] = deriveDecoder[NilExtraConfig]
+  implicit val testExtraConfigEncoder: Encoder[TestExtraConfig] = deriveEncoder[TestExtraConfig]
+  implicit val testExtraConfigDecoder: Decoder[TestExtraConfig] = deriveDecoder[TestExtraConfig]
+  implicit val assembleExtraConfigEncoder: Encoder[AssembleExtraConfig] = deriveEncoder[AssembleExtraConfig]
+  implicit val assembleExtraConfigDecoder: Decoder[AssembleExtraConfig] = deriveDecoder[AssembleExtraConfig]
+}
+import ExtraConfigEncoders.*
+
+object ScalaExtraConfig {
+  implicit val scalaExtraConfigEncoder: Encoder[ScalaExtraConfig] = ExtraConfigEncoders.scalaExtraConfigEncoder
+  implicit val scalaExtraConfigDecoder: Decoder[ScalaExtraConfig] = ExtraConfigEncoders.scalaExtraConfigDecoder
+}
+object IvyExtraConfig {
+  implicit val ivyExtraConfigEncoder: Encoder[IvyExtraConfig] = ExtraConfigEncoders.ivyExtraConfigEncoder
+  implicit val ivyExtraConfigDecoder: Decoder[IvyExtraConfig] = ExtraConfigEncoders.ivyExtraConfigDecoder
+}
+object AetherExtraConfig {
+  implicit val aetherExtraConfigEncoder: Encoder[AetherExtraConfig] = ExtraConfigEncoders.aetherExtraConfigEncoder
+  implicit val aetherExtraConfigDecoder: Decoder[AetherExtraConfig] = ExtraConfigEncoders.aetherExtraConfigDecoder
+}
+object SbtExtraConfig {
+  implicit val sbtExtraConfigEncoder: Encoder[SbtExtraConfig] = ExtraConfigEncoders.sbtExtraConfigEncoder
+  implicit val sbtExtraConfigDecoder: Decoder[SbtExtraConfig] = ExtraConfigEncoders.sbtExtraConfigDecoder
+}
 
 object BuildSystemExtras {
-  val buildSystems: Map[String, java.lang.Class[_ <: ExtraConfig]] = Map(
+  val buildSystems: Map[String, java.lang.Class[? <: ExtraConfig]] = Map(
     "sbt" -> classOf[SbtExtraConfig],
     "scala" -> classOf[ScalaExtraConfig],
     "ivy" -> classOf[IvyExtraConfig],
@@ -719,17 +791,27 @@ object BuildSystemExtras {
 
 /** configuration for the Nil build system */
 case class NilExtraConfig() extends ExtraConfig
+object NilExtraConfig {
+  implicit val nilExtraConfigEncoder: Encoder[NilExtraConfig] = ExtraConfigEncoders.nilExtraConfigEncoder
+  implicit val nilExtraConfigDecoder: Decoder[NilExtraConfig] = ExtraConfigEncoders.nilExtraConfigDecoder
+}
 
 /** configuration for the Test build system */
 case class TestExtraConfig() extends ExtraConfig
+object TestExtraConfig {
+  implicit val testExtraConfigEncoder: Encoder[TestExtraConfig] = ExtraConfigEncoders.testExtraConfigEncoder
+  implicit val testExtraConfigDecoder: Decoder[TestExtraConfig] = ExtraConfigEncoders.testExtraConfigDecoder
+}
 
 /** configuration for the Assemble build system */
 case class AssembleExtraConfig(
   parts: SeqDBC = Seq()) extends ExtraConfig
+object AssembleExtraConfig {
+  implicit val assembleExtraConfigEncoder: Encoder[AssembleExtraConfig] = ExtraConfigEncoders.assembleExtraConfigEncoder
+  implicit val assembleExtraConfigDecoder: Decoder[AssembleExtraConfig] = ExtraConfigEncoders.assembleExtraConfigDecoder
+}
 
 // our simplified version of Either: we use it to group String and SelectorSubProjects in a transparent manner
-@JsonSerialize(using = classOf[SelectorElementSerializer])
-@JsonDeserialize(using = classOf[SelectorElementDeserializer])
 sealed abstract class SelectorElement { def name: String }
 case class SelectorProject(a: String) extends SelectorElement {
   override def toString() = a
@@ -740,40 +822,24 @@ case class SelectorSubProjects(info: SubProjects) extends SelectorElement {
   def name = info.from
 }
 
-class SelectorElementSerializer extends JsonSerializer[SelectorElement] {
-  override def serialize(value: SelectorElement, g: JsonGenerator, p: SerializerProvider) {
-    value match {
-      case SelectorProject(s) =>
-        new StringSerializer().serialize(s, g, p)
-      case SelectorSubProjects(d) =>
-        val cfg = p.getConfig()
-        val tf = cfg.getTypeFactory()
-        val jt = tf.constructType(classOf[SubProjects])
-        val Some(sts) = ScalaTypeSig(cfg.getTypeFactory, jt)
-        // the "true" below is for options.caseClassSkipNulls
-        (new CaseClassSerializer(jt, sts.annotatedAccessors(cfg), true)).serialize(d, g, p)
-      case _ => throw new Exception("Internal error while serializing deploy projects. Please report.")
-    }
+object SelectorElement {
+  implicit val selectorElementEncoder: Encoder[SelectorElement] = Encoder.instance {
+    case SelectorProject(s) => Json.fromString(s)
+    case SelectorSubProjects(d) => SubProjects.subProjectsEncoder(d)
   }
-}
-class SelectorElementDeserializer extends JsonDeserializer[SelectorElement] {
-  override def deserialize(p: JsonParser, ctx: DeserializationContext): SelectorElement = {
-    val tf = ctx.getConfig.getTypeFactory()
-    val d = ctx.findContextualValueDeserializer(tf.constructType(classOf[JsonNode]), null)
-    val generic = d.deserialize(p, ctx).asInstanceOf[JsonNode]
-    val jp = generic.traverse()
-    jp.nextToken()
-    def valueAs[T](cls: Class[T]) = cls.cast(ctx.findContextualValueDeserializer(tf.constructType(cls), null).deserialize(jp, ctx))
-    if (generic.isTextual()) {
-      SelectorProject(valueAs(classOf[String]))
-    } else {
-      // We have renamed "publish" to "subprojects", which is a bit more generic;
-      // we can use SelectorElements in more contexts. So, in order to assist with
-      // the migration, let's see if a "publish" field was encountered.
-      if (generic.fieldNames.asScala.contains("publish")) {
-        sys.error("In the subproject selection, the field \"publish\" is now called \"subprojects\": please update your build file.")
-      }
-      SelectorSubProjects(valueAs(classOf[SubProjects]))
+  implicit val selectorElementDecoder: Decoder[SelectorElement] = Decoder.instance { c =>
+    c.value.asString match {
+      case Some(s) => Right(SelectorProject(s))
+      case None =>
+        // We have renamed "publish" to "subprojects", which is a bit more generic;
+        // we can use SelectorElements in more contexts. So, in order to assist with
+        // the migration, let's see if a "publish" field was encountered.
+        c.value.asObject match {
+          case Some(obj) if obj.contains("publish") =>
+            Left(io.circe.DecodingFailure(
+              "In the subproject selection, the field \"publish\" is now called \"subprojects\": please update your build file.", c.history))
+          case _ => c.as[SubProjects].map(SelectorSubProjects(_))
+        }
     }
   }
 }
@@ -782,8 +848,6 @@ class SelectorElementDeserializer extends JsonDeserializer[SelectorElement] {
  * same as SeqString, for Seq[SelectorElement]: a lonely String or a lonely
  *  SelectorSubProjs can also be used when a Seq[SelectorElement] is requested.
  */
-@JsonSerialize(using = classOf[SeqElementSerializer])
-@JsonDeserialize(using = classOf[SeqElementDeserializer])
 case class SeqSelectorElement(override val s: Seq[SelectorElement]) extends Flex[SelectorElement](s) {
   /**
    * From its list of selected projects, which may include '.' for the root, and
@@ -808,7 +872,7 @@ case class SeqSelectorElement(override val s: Seq[SelectorElement]) extends Flex
 
     val fromRoot = if (projReqs.exists(_.name == ".")) allProjNames else Set[String]()
     // list of names of projects mentioned in subprojects from root
-    val fromDotSubs = subProjReqs.filter(_.name == ".").flatMap { p: SelectorSubProjects => p.info.subprojects }
+    val fromDotSubs = subProjReqs.filter(_.name == ".").flatMap { (p: SelectorSubProjects) => p.info.subprojects }
     // are you kidding me?
     if (fromDotSubs.contains(".")) sys.error("A from/publish defined '.' as a subproject of '.', which is impossible. Please amend.")
     // ok, this is the complete list of full project requests
@@ -826,22 +890,26 @@ case class SeqSelectorElement(override val s: Seq[SelectorElement]) extends Flex
     reqs
   }
 }
-class SeqElementDeserializer extends SeqFlexDeserializer[SelectorElement, SeqSelectorElement]
-class SeqElementSerializer extends SeqFlexSerializer[SelectorElement]
+object SeqSelectorElement {
+  implicit val seqSelectorElementEncoder: Encoder[SeqSelectorElement] =
+    flexEncoder[SelectorElement](SelectorElement.selectorElementEncoder).contramap(_.s)
+  implicit val seqSelectorElementDecoder: Decoder[SeqSelectorElement] =
+    flexDecoder[SelectorElement](SelectorElement.selectorElementDecoder).map(SeqSelectorElement(_))
+}
 object SeqSelectorElementH {
   implicit def SeqToSeqSelectorElement(s: Seq[SelectorElement]): SeqSelectorElement = SeqSelectorElement(s)
   implicit def SeqSelectorElementToSeq(a: SeqSelectorElement): Seq[SelectorElement] = a.s
 }
 /**
  * same as SeqString, for Seq[Notification]: a single Notification will be wrapped into an array.
- *  Note that I cannot make easily a generic version, since Jackson requires a no-args constructur
- *  and I cannot construct a sequence without a Manifest. So I only special case a few of them.
  */
-@JsonSerialize(using = classOf[SeqNotificationSerializer])
-@JsonDeserialize(using = classOf[SeqNotificationDeserializer])
 case class SeqNotification(override val s: Seq[Notification]) extends Flex[Notification](s)
-class SeqNotificationDeserializer extends SeqFlexDeserializer[Notification, SeqNotification]
-class SeqNotificationSerializer extends SeqFlexSerializer[Notification]
+object SeqNotification {
+  implicit val seqNotificationEncoder: Encoder[SeqNotification] =
+    flexEncoder[Notification](Notification.notificationEncoder).contramap(_.s)
+  implicit val seqNotificationDecoder: Decoder[SeqNotification] =
+    flexDecoder[Notification](Notification.notificationDecoder).map(SeqNotification(_))
+}
 object SeqNotificationH {
   implicit def SeqToSeqNotification(s: Seq[Notification]): SeqNotification = SeqNotification(s)
   implicit def SeqNotificationToSeq(a: SeqNotification): Seq[Notification] = a.s
@@ -865,12 +933,14 @@ trait ProjectOptions {
 }
 abstract class BuildOptions extends ExtraOptions with ProjectOptions
 
-@JsonDeserialize(using = classOf[DeprecatedBuildOptionsDeserializer])
 abstract class DeprecatedBuildOptions
-class DeprecatedBuildOptionsDeserializer extends JsonDeserializer[BuildOptions] {
-  override def deserialize(p: JsonParser, ctx: DeserializationContext): BuildOptions = {
+object DeprecatedBuildOptions {
+  implicit val deprecatedBuildOptionsDecoder: Decoder[DeprecatedBuildOptions] = Decoder.instance { c =>
     sys.error("\"build.options\" have moved. Please rename \"build.options.xxx\" to just \"build.xxx\".")
   }
+  // Never actually holds an instance (the field is always None in practice, since the decoder above
+  // always throws instead of ever producing one); only needed so Encoder[DBuildConfig] can be derived.
+  implicit val deprecatedBuildOptionsEncoder: Encoder[DeprecatedBuildOptions] = Encoder.instance(_ => Json.Null)
 }
 
 /**
@@ -888,6 +958,10 @@ case class NotificationOptions(
    *  records.
    */
   default: SeqNotification = Seq[Notification]())
+object NotificationOptions {
+  implicit val notificationOptionsEncoder: Encoder[NotificationOptions] = deriveEncoder[NotificationOptions]
+  implicit val notificationOptionsDecoder: Decoder[NotificationOptions] = deriveDecoder[NotificationOptions]
+}
 /**
  *  A notification template; for notification systems that require short messages,
  *  use only the subject line. It is a template because variable
@@ -909,6 +983,10 @@ case class NotificationTemplate(
   summary: String,
   short: Option[String] = None,
   long: Option[String] = None)
+object NotificationTemplate {
+  implicit val notificationTemplateEncoder: Encoder[NotificationTemplate] = dropNullValues(deriveEncoder[NotificationTemplate])
+  implicit val notificationTemplateDecoder: Decoder[NotificationTemplate] = deriveDecoder[NotificationTemplate]
+}
 
 /**
  * The NotificationTemplate is first resolved against the notification,
@@ -920,8 +998,11 @@ case class ResolvedTemplate(
   summary: String,
   short: String,
   long: String)
+object ResolvedTemplate {
+  implicit val resolvedTemplateEncoder: Encoder[ResolvedTemplate] = deriveEncoder[ResolvedTemplate]
+  implicit val resolvedTemplateDecoder: Decoder[ResolvedTemplate] = deriveDecoder[ResolvedTemplate]
+}
 
-@JsonDeserialize(using = classOf[NotificationDeserializer])
 case class Notification(
   /** the kind of notification. Default is "email" */
   kind: String = "email",
@@ -953,19 +1034,6 @@ case class Notification(
    *  if a single string is specified.
    */
   projects: SeqSelectorElement = Seq(SelectorProject("."))) {
-  /*
- *  example:
-  
-  options.notifications.send = [{
-    projects: jline
-    send.to: "antonio.cunei@typesafe.com"
-  },{
-    projects: scala-compiler
-    send.to: "joshua.suereth@typesafe.com"
-  }]
-  options.notifications.defaults.send.smtp.server = "relay.lightbend.com"
-  
-*/
   /**
    * If the notification refers to a specific template name, use that template name,
    * otherwise the template name we need is the same as the notification kind.
@@ -990,14 +1058,35 @@ case class Notification(
     ResolvedTemplate(templ.id, templ.summary, short, long)
   }
 }
-// We need this shadow class for serialization/deserialization to work
-// It must be kept in sync with Notification.
-private case class NotificationShadow(
+// We need this shadow class for deserialization to work: "send" needs to be decoded
+// according to the sibling "kind" field, so we decode it as raw JSON first.
+private case class NotificationRaw(
   kind: String = "email",
-  send: JsonNode = null,
+  send: Option[Json] = None,
   when: SeqString = Seq("bad", "success"),
   template: Option[String] = None,
   projects: SeqSelectorElement = Seq(SelectorProject(".")))
+private object NotificationRaw {
+  implicit val decoder: Decoder[NotificationRaw] = deriveDecoder[NotificationRaw]
+}
+object Notification {
+  implicit val notificationEncoder: Encoder[Notification] = dropNullValues(deriveEncoder[Notification])
+  implicit val notificationDecoder: Decoder[Notification] = Decoder.instance { c =>
+    c.as[NotificationRaw].flatMap { raw =>
+      val kind = raw.kind
+      NotificationKind.decoderFor(kind) match {
+        case None => Left(io.circe.DecodingFailure("Notification kind \"" + kind + "\" is unknown.", c.history))
+        case Some(dec) =>
+          (raw.send match {
+            case None => Right(None)
+            case Some(json) => dec.decodeJson(json).map(Some(_))
+          }).map { newData =>
+            Notification(kind, newData, raw.when, raw.template, raw.projects)
+          }
+      }
+    }
+  }
+}
 
 /**
  * The descriptor of options for each notification mechanism;
@@ -1007,57 +1096,25 @@ private case class NotificationShadow(
  * notifications; any inappropriate default value should be
  * detected when sending (or before).
  */
-@JsonSerialize(using = classOf[NotificationKindSerializer])
 abstract class NotificationKind
 
-class NotificationKindSerializer extends JsonSerializer[NotificationKind] {
-  override def serialize(value: NotificationKind, g: JsonGenerator, p: SerializerProvider) {
-    val cfg = p.getConfig()
-    val tf = cfg.getTypeFactory()
-    val jt = tf.constructType(value.getClass)
-    ScalaTypeSig(cfg.getTypeFactory, jt) match {
-      case Some(sts) if sts.isCaseClass =>
-        // the "true" below is for options.caseClassSkipNulls
-        (new CaseClassSerializer(jt, sts.annotatedAccessors(cfg), true)).serialize(value.asInstanceOf[Product], g, p)
-      case _ => throw new Exception("Internal error while serializing NotificationKind. Please report.")
-    }
+object NotificationKind {
+  private val decoders: Map[String, Decoder[? <: NotificationKind]] = Map(
+    "console" -> Decoder[ConsoleNotification],
+    "flowdock" -> Decoder[FlowdockNotification],
+    "email" -> Decoder[EmailNotification])
+  def decoderFor(kind: String): Option[Decoder[NotificationKind]] =
+    decoders.get(kind).map(_.asInstanceOf[Decoder[NotificationKind]])
+
+  implicit val notificationKindEncoder: Encoder[NotificationKind] = Encoder.instance {
+    case n: ConsoleNotification  => ConsoleNotification.consoleNotificationEncoder(n)
+    case n: FlowdockNotification => FlowdockNotification.flowdockNotificationEncoder(n)
+    case n: EmailNotification    => EmailNotification.emailNotificationEncoder(n)
+    case other => throw new Exception("Internal error while serializing NotificationKind. Please report. (" + other.getClass + ")")
   }
 }
 
-class NotificationDeserializer extends JsonDeserializer[Notification] {
-  override def deserialize(p: JsonParser, ctx: DeserializationContext): Notification = {
-    val notificationKinds = NotificationKindH.kinds
-
-    val tf = ctx.getConfig.getTypeFactory()
-    val d = ctx.findContextualValueDeserializer(tf.constructType(classOf[NotificationShadow]), null)
-    val generic = d.deserialize(p, ctx).asInstanceOf[NotificationShadow]
-
-    if (generic == null) throw new Exception("Cannot deserialize notification: no value found")
-
-    val from = generic.send
-    val kind = generic.kind
-
-    if (!(notificationKinds.contains(kind))) throw new Exception("Notification kind \"" + kind + "\" is unknown.")
-    val newData = if (from == null) None else Some({
-      val cls = notificationKinds(kind)
-      val jp = from.traverse()
-      jp.nextToken()
-      cls.cast(ctx.findContextualValueDeserializer(tf.constructType(cls), null).deserialize(jp, ctx))
-    })
-    Notification(kind, newData, generic.when, generic.template, generic.projects)
-  }
-}
-
-/**
- * We could embed send() into NotificationKind, but:
- * 1) too much logic would end up in the low-level metadata package
- * 2) we would not have access to higher-level context
- * Therefore the actual send() is implemented in a twin class higher up in dbuild.
- * We also offer an opportunity to the NotificationKinds to do something once before all the
- * notifications are sent, and something afterward. Only the notification kinds that
- * are actually used in the configuration file will be called.
- */
-abstract class NotificationContext[T <: NotificationKind](implicit m: Manifest[T]) {
+abstract class NotificationContext[T <: NotificationKind](implicit ct: scala.reflect.ClassTag[T]) {
   /** before() is called once after the build, before all the send()s of this kind. */
   def before() = {}
   /** after() is called after all the send()s of this kind, for cleanup. */
@@ -1088,25 +1145,18 @@ abstract class NotificationContext[T <: NotificationKind](implicit m: Manifest[T
     n match {
       case None => send(defaultOptions, templ, outcome)
       case Some(no) =>
-        // NotificationKinds are referred to by String IDs, so we have to check manually
-        // (the code must work on 2.9 as well)
-        if (m.erasure.isInstance(no)) send(no.asInstanceOf[T], templ, outcome) else
-          sys.error("Internal error: " + this.getClass.getName + " received a " + n.getClass.getName + ". Please report.")
+        if (ct.runtimeClass.isInstance(no)) send(no.asInstanceOf[T], templ, outcome) else
+          sys.error("Internal error: " + this.getClass.getName + " received a " + no.getClass.getName + ". Please report.")
     }
   }
   /** The client code calls mergeOptionsK, which is internally re-dispatched to mergeOptions */
   def mergeOptionsK(over: Option[NotificationKind], under: Option[NotificationKind]): NotificationKind = {
-    // Once again, I get something that is no more specific than a NotificationKind, but I *know* from a String ID
-    // that they are the right kind for this Context, so I test for extra safety and cast. I am sure there is a
-    // prettier solution, probably using type members or path-dependent types (by nesting NotificationKind and/or
-    // NotificationContext into Notification), but implementation time is short at the moment and for the moment this will do.
-    // TODO: clean up this uglyness
     (over, under) match {
       case (None, None) => defaultOptions
       case (Some(ov), None) => ov
       case (None, Some(un)) => un
       case (Some(ov), Some(un)) =>
-        if (m.erasure.isInstance(ov) && m.erasure.isInstance(un)) mergeOptions(ov.asInstanceOf[T], un.asInstanceOf[T]) else
+        if (ct.runtimeClass.isInstance(ov) && ct.runtimeClass.isInstance(un)) mergeOptions(ov.asInstanceOf[T], un.asInstanceOf[T]) else
           sys.error("Internal error: " + this.getClass.getName + " received: " + ov.getClass.getName + "-" + un.getClass.getName + ". Please report.")
     }
   }
@@ -1131,6 +1181,10 @@ case class EmailNotification(
    * to localhost, port 25, no auth, hoping for the best.
    */
   smtp: Smtp = Smtp("localhost", None, "none", false)) extends NotificationKind
+object EmailNotification {
+  implicit val emailNotificationEncoder: Encoder[EmailNotification] = dropNullValues(deriveEncoder[EmailNotification])
+  implicit val emailNotificationDecoder: Decoder[EmailNotification] = deriveDecoder[EmailNotification]
+}
 
 /**
  * Messages sent to a Flowdock flow, via their Push API
@@ -1151,6 +1205,10 @@ case class FlowdockNotification(
   from: String = "",
   /** tags that will be appended to the message */
   tags: SeqString = Seq.empty) extends NotificationKind
+object FlowdockNotification {
+  implicit val flowdockNotificationEncoder: Encoder[FlowdockNotification] = deriveEncoder[FlowdockNotification]
+  implicit val flowdockNotificationDecoder: Decoder[FlowdockNotification] = deriveDecoder[FlowdockNotification]
+}
 
 /**
  * Description of the smtp server to be used for email delivery.
@@ -1179,12 +1237,22 @@ case class Smtp(
    * If using SSL/TLS, a self-signed certificate could be in use.
    * In that case, explicitly disable certificate checking here.
    */
-  @JsonProperty("check-certificate") checkCertificate: Boolean = true)
+  checkCertificate: Boolean = true)
+object Smtp {
+  implicit val smtpEncoder: Encoder[Smtp] =
+    dropNullValues(renamedEnc("checkCertificate" -> "check-certificate")(deriveEncoder[Smtp]))
+  implicit val smtpDecoder: Decoder[Smtp] =
+    renamedDec("checkCertificate" -> "check-certificate")(deriveDecoder[Smtp])
+}
 
 case class ConsoleNotification() extends NotificationKind
+object ConsoleNotification {
+  implicit val consoleNotificationEncoder: Encoder[ConsoleNotification] = deriveEncoder[ConsoleNotification]
+  implicit val consoleNotificationDecoder: Decoder[ConsoleNotification] = deriveDecoder[ConsoleNotification]
+}
 
 object NotificationKindH {
-  val kinds: Map[String, java.lang.Class[_ <: NotificationKind]] = Map(
+  val kinds: Map[String, java.lang.Class[? <: NotificationKind]] = Map(
     "console" -> classOf[ConsoleNotification],
     "flowdock" -> classOf[FlowdockNotification],
     "email" -> classOf[EmailNotification])
@@ -1194,34 +1262,28 @@ object NotificationKindH {
 case class Timeouts (
   // timeout that we allow for each extraction to complete
   // (may include git/svn checkout, and Ivy resolution)
-  @JsonProperty("extraction") extractionTimeout: FiniteDuration = 1.hour,
+  extractionTimeout: FiniteDuration = 1.hour,
 
   // timeout that we allow for each build to complete (only during the build phase);
-  @JsonProperty("build") buildTimeout: FiniteDuration = 5.hours,
+  buildTimeout: FiniteDuration = 5.hours,
 
   // timeout that we allow for the entire extraction phase to complete
-  @JsonProperty("extraction-phase") extractionPhaseTimeout: FiniteDuration = 6.hours,
+  extractionPhaseTimeout: FiniteDuration = 6.hours,
 
   // timeout that we allow for the entire build phase to complete
-  @JsonProperty("build-phase") buildPhaseTimeout: FiniteDuration = 16.hours,
+  buildPhaseTimeout: FiniteDuration = 16.hours,
 
   // overall timeout for the entire dbuild to complete
-  @JsonProperty("dbuild") dbuildTimeout: FiniteDuration = 23.hours
+  dbuildTimeout: FiniteDuration = 23.hours
 )
-
-class FiniteDurationSerializer extends JsonSerializer[FiniteDuration] {
-  override def serialize(value: FiniteDuration, g: JsonGenerator, p: SerializerProvider) {
-    new StringSerializer().serialize(value.toString, g, p)
-  }
-}
-class FiniteDurationDeserializer extends JsonDeserializer[FiniteDuration] {
-  override def deserialize(p: JsonParser, ctx: DeserializationContext): FiniteDuration = {
-    val tf = ctx.getConfig.getTypeFactory()
-    val d = ctx.findContextualValueDeserializer(tf.constructType(classOf[String]), null)
-    val s = d.deserialize(p, ctx).asInstanceOf[String]
-    Duration(s) match {
-      case f: FiniteDuration if f > Duration("0 nanoseconds") => f
-      case _ => sys.error("The duration "+s+" is invalid, it must be a positive, non-zero finite duration");
-    }
-  }
+object Timeouts {
+  import Utils.{ finiteDurationEncoder, finiteDurationDecoder }
+  private val renames: Seq[(String, String)] = Seq(
+    "extractionTimeout" -> "extraction",
+    "buildTimeout" -> "build",
+    "extractionPhaseTimeout" -> "extraction-phase",
+    "buildPhaseTimeout" -> "build-phase",
+    "dbuildTimeout" -> "dbuild")
+  implicit val timeoutsEncoder: Encoder[Timeouts] = renamedEnc(renames: _*)(deriveEncoder[Timeouts])
+  implicit val timeoutsDecoder: Decoder[Timeouts] = renamedDec(renames: _*)(deriveDecoder[Timeouts])
 }

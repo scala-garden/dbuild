@@ -1,26 +1,30 @@
 package com.typesafe.dbuild.deploy
 
-import sbt._
-import java.io.File
-import java.net.URI
-import com.amazonaws.services.s3.AmazonS3Client
-import com.amazonaws.services.s3.model.PutObjectRequest
-import com.amazonaws.auth.BasicAWSCredentials
+import Creds.loadCreds
+import _root_.io.circe.Decoder
+import _root_.io.circe.generic.semiauto.deriveDecoder
+import _root_.io.circe.parser.parse
 import com.amazonaws.ClientConfiguration
 import com.amazonaws.Protocol
-import Creds.loadCreds
-import com.jcraft.jsch.{ IO => sshIO, Logger => _, _ }
-import java.util.Date
+import com.amazonaws.auth.BasicAWSCredentials
+import com.amazonaws.services.s3.AmazonS3Client
+import com.amazonaws.services.s3.model.PutObjectRequest
 import com.jcraft.jsch.ChannelSftp
-import com.typesafe.dbuild.adapter.Adapter
-import Adapter.{IO,Logger,allPaths}
-import com.lambdaworks.jacks.JacksMapper
-import Adapter.Path._
-import Adapter.syntaxio._
-import dispatch.{url => dispUrl, Http}
+import com.jcraft.jsch.{ IO => sshIO, Logger => _, * }
+import com.typesafe.dbuild.adapter.Adapter.allPaths
+import gigahorse.HttpClient
+import gigahorse.support.apachehttp.Gigahorse
+import java.io.File
+import java.net.URI
+import java.util.Date
+import sbt.*
+import sbt.io.IO
+import sbt.io.Path.*
+import sbt.io.syntax.*
+import sbt.util.Logger
+import scala.concurrent.*
 import scala.concurrent.ExecutionContext.Implicits.global
-import scala.concurrent._
-import scala.concurrent.duration._
+import scala.concurrent.duration.*
 
 /**
  * A generic (S3, http, https, etc) deploy location.
@@ -56,7 +60,7 @@ abstract class DeployTarget extends DeployInfo {
  * given directory, to some remote (or local) target.
  */
 abstract class Deploy[T](options: DeployInfo) {
-  def deploy[T](dir: File)
+  def deploy[T](dir: File): Unit
 }
 /**
  * Use Deploy.deploy(target,dir,log) to deploy a set of artifacts, contained in the directory "dir",
@@ -77,19 +81,18 @@ object Deploy {
   }
   def isNotChecksum(path: String): Boolean = !(path.endsWith(".sha1") || path.endsWith(".md5"))
 
-  // Use jacks and Jackson to read a /possible/ response from Artifactory
+  // Read a /possible/ response from Artifactory.
   // This readSomePath() is essentially a duplicate of the one defined in package Utils,
   // replicated here in order to allow the use of this "deploy" package without importing
   // additional dbuild packages, or unnecessary dependencies.
-  private val mapper = JacksMapper
-  private[deploy] def readSomePath[T](s: String)(implicit m: Manifest[T]) = {
+  private[deploy] def readSomePath[T](s: String)(implicit d: Decoder[T]) = {
     val current = Thread.currentThread.getContextClassLoader
     try {
       Thread.currentThread setContextClassLoader getClass.getClassLoader
       try {
-        Some(mapper.readValue[T](s))
+        parse(s).flatMap(_.as[T]).toOption
       } catch {
-        case e: com.fasterxml.jackson.databind.JsonMappingException => None
+        case e: _root_.io.circe.Error => None
       }
     } finally Thread.currentThread setContextClassLoader current
   }
@@ -103,8 +106,8 @@ object Deploy {
 abstract class IterativeDeploy[T](options: DeployInfo) extends Deploy[T](options) {
   import Deploy.isNotChecksum
   protected def init(): T
-  protected def message(relative: String)
-  protected def deployItem(handler: T, relative: String, file: File, targetURI: URI)
+  protected def message(relative: String): Unit
+  protected def deployItem(handler: T, relative: String, file: File, targetURI: URI): Unit
   protected def close(handler: T) = ()
 
   val credentials = options.creds getOrElse sys.error("No credentials supplied for uri " + options.uri)
@@ -118,7 +121,7 @@ abstract class IterativeDeploy[T](options: DeployInfo) extends Deploy[T](options
    * order, in order to comply with the peculiar requirements of
    * Maven/Ivy repositories (Artifactory, in particular).
    */
-  def deploy[T](dir: File) {
+  def deploy[T](dir: File): Unit = {
     val targetBaseURI = new java.net.URI(options.uri)
     val handler = init()
     try {
@@ -133,7 +136,7 @@ abstract class IterativeDeploy[T](options: DeployInfo) extends Deploy[T](options
       // - finally, the checksums are uploaded after the main artifacts
       //
 
-      val allFiles = allPaths(dir).get.filter(f => !f.isDirectory)
+      val allFiles = allPaths(dir).get().filter(f => !f.isDirectory)
       val poms = allFiles.filter(f => f.getName.endsWith("-SNAPSHOT.pom"))
       //
       // we fold over the poms, reducing the set of files until we are left with just
@@ -144,7 +147,7 @@ abstract class IterativeDeploy[T](options: DeployInfo) extends Deploy[T](options
           val thisDir = pomFile.getParentFile()
           if (thisDir == null) sys.error("Unexpected: file has not parent in deploy")
           // select the files in this directory (but not in subdirectories)
-          val theseFiles = allPaths(thisDir).get.filter(f => !f.isDirectory && f.getParentFile() == thisDir)
+          val theseFiles = allPaths(thisDir).get().filter(f => !f.isDirectory && f.getParentFile() == thisDir)
           // if there is a matching jar, upload the jar first
           val jarFile = new java.io.File(pomFile.getPath().replaceAll("\\.[^\\.]*$", ".jar"))
           val thisSeq = if (theseFiles contains jarFile) {
@@ -185,7 +188,7 @@ class DeploySSH(log: Logger, options: DeployInfo) extends IterativeDeploy[Channe
     import log.{ debug => ld, info => li, warn => lw, error => le }
     JSch.setLogger(new com.jcraft.jsch.Logger {
       def isEnabled(level: Int) = true
-      import com.jcraft.jsch.Logger._
+      import com.jcraft.jsch.Logger.*
       def log(level: Int, message: String) = level match {
         // levels are arranged so that ssh info is debug for dbuild
         case DEBUG => ld(message)
@@ -198,8 +201,8 @@ class DeploySSH(log: Logger, options: DeployInfo) extends IterativeDeploy[Channe
     // try to locate a private key; if it exists, add
     // the identity (for passwordless authentication)
     // Only the default location is supported, and no passphrase
-    import Adapter.syntaxio._
-    import Adapter.Path._
+    import sbt.io.Path.*
+    import sbt.io.syntax.*
     val privateKeyLocation = new File(System.getProperty("user.home")) / ".ssh" / "id_rsa"
     try {
       val is = new java.io.FileInputStream(privateKeyLocation)
@@ -276,21 +279,23 @@ class DeployNull(log: Logger, options: DeployInfo) extends
   protected def deployItem(nothing: Unit, relative: String, file: File, uri: URI) = {}
 }
 
-class DeployHTTP(log: Logger, options: DeployInfo, timeOut: Duration = 20 minutes)
-  extends IterativeDeploy[Unit](options) {
+class DeployHTTP(log: Logger, options: DeployInfo, timeOut: Duration = 20.minutes)
+  extends IterativeDeploy[HttpClient](options) {
   import Deploy.isNotChecksum
-  protected def init() = ()
+  protected def init() = Gigahorse.http(Gigahorse.config)
+  override protected def close(http: HttpClient) = http.close()
   protected def message(relative: String) =
     if (isNotChecksum(relative))
       log.info("Deploying: " + relative)
     else
       log.info("Verifying checksum: " + relative)
-  protected def deployItem(handler: Unit, relative: String, file: File, uri: URI) = {
-    val sender =
-      dispUrl(uri.toString).PUT.as(credentials.user, credentials.pass).setBody(file).setContentType("application/octet-stream","UTF-8")
-    val response = Await.result(Http(sender OK { response =>
-      Deploy.readSomePath[ArtifactoryResponse](response.getResponseBody)
-    }), timeOut)
+  protected def deployItem(http: HttpClient, relative: String, file: File, uri: URI) = {
+    val request = Gigahorse.url(uri.toString).put(file)
+      .withAuth(credentials.user, credentials.pass)
+      .withContentType("application/octet-stream")
+      .withRequestTimeout(timeOut)
+    val body = Await.result(http.run(request, Gigahorse.asString), timeOut)
+    val response = Deploy.readSomePath[ArtifactoryResponse](body)
     try {
       if (response != None && response.get.path != None && response.get.path.get != null) {
         val out = response.get.path.get.replaceFirst("^/", "")
@@ -314,3 +319,6 @@ class DeployFiles(log: Logger, options: DeployInfo) extends Deploy[Unit](options
 
 // Response from Artifactory
 case class ArtifactoryResponse(path: Option[String])
+object ArtifactoryResponse {
+  implicit val artifactoryResponseDecoder: Decoder[ArtifactoryResponse] = deriveDecoder[ArtifactoryResponse]
+}

@@ -1,32 +1,32 @@
 package com.typesafe.dbuild.project.build
 
-import com.typesafe.dbuild.model._
 import com.typesafe.dbuild.logging.Logger
-import akka.actor.{ ActorRef, Actor, Props, PoisonPill, Terminated }
-import akka.util.Timeout
-import scala.concurrent.Await
-import scala.concurrent.duration._
-import com.typesafe.dbuild.project.resolve.ProjectResolver
-import java.io.File
-import com.typesafe.dbuild.repo.core._
-import sbt.io.{ IO, DirectoryFilter }
-import sbt.io.Path._
-import sbt.io.syntax._
-import com.typesafe.dbuild.project.cleanup.Recycling._
-import com.typesafe.dbuild.repo.core.GlobalDirs.buildDir
-import com.typesafe.dbuild.project.{ BuildSystem, BuildData }
-import com.typesafe.dbuild.utils.TrackedProcessBuilder
-import akka.pattern.ask
-import java.util.concurrent.TimeoutException
-import scala.util.{Success,Failure}
 import Logger.prepareLogMsg
+import com.typesafe.dbuild.model.*
+import com.typesafe.dbuild.project.cleanup.Recycling.*
+import com.typesafe.dbuild.project.resolve.ProjectResolver
+import com.typesafe.dbuild.project.{ BuildSystem, BuildData }
+import com.typesafe.dbuild.repo.core.*
+import com.typesafe.dbuild.repo.core.GlobalDirs.buildDir
+import com.typesafe.dbuild.utils.TrackedProcessBuilder
+import java.io.File
+import java.util.concurrent.TimeoutException
+import org.apache.pekko.actor.{ ActorRef, Actor, Props, PoisonPill, Terminated }
+import org.apache.pekko.pattern.ask
+import org.apache.pekko.util.Timeout
+import sbt.io.Path.*
+import sbt.io.syntax.*
+import sbt.io.{ IO, DirectoryFilter }
+import scala.concurrent.Await
+import scala.concurrent.duration.*
+import scala.util.{Success,Failure}
 
 case class RunBuild(build: RepeatableProjectBuild, outProjects: Seq[Project], children: Seq[BuildOutcome], buildData: BuildData)
 
 class CleaningBuildActor extends Actor {
   def receive = {
     case target: File =>
-      IO.delete(buildDir(target).*(DirectoryFilter).get.filter(markedForDeletion))
+      IO.delete(buildDir(target).*(DirectoryFilter).get().filter(markedForDeletion))
       self ! PoisonPill
   }
 }
@@ -37,7 +37,7 @@ class BuildRunnerActor(builder: LocalBuildRunner, target: File, exp: CleanupExpi
   override def preStart() = {
     // Cleanup works in two stages; see ExtractorActor for details.
     // Note that cleanup is performed independently for the extraction and build directories
-    buildDir(target).*(DirectoryFilter).get.filter(upForDeletion(_, exp)).foreach(prepareForDeletion)
+    buildDir(target).*(DirectoryFilter).get().filter(upForDeletion(_, exp)).foreach(prepareForDeletion)
     // spawn the cleaning actor
     context.actorOf(Props(new CleaningBuildActor)) ! target
   }
@@ -45,7 +45,7 @@ class BuildRunnerActor(builder: LocalBuildRunner, target: File, exp: CleanupExpi
   def receive = {
     case RunBuild(build, outProjects, children, buildData@BuildData(log, _)) =>
       log info ("--== Building %s ==--" format (build.config.name))
-      sender ! (try {
+      sender() ! (try {
         builder.checkCacheThenBuild(target, build, tracker, outProjects, children, buildData)
       } catch {
         case t:Throwable =>
@@ -61,7 +61,7 @@ class TimedBuildRunnerActor(builder: LocalBuildRunner, target: File,
   val realBuilder = context.actorOf(Props(new BuildRunnerActor(builder, target, exp, tracker)))
   def receive = {
     case msg@RunBuild(build, outProjects, children, buildData@BuildData(log, _)) =>
-      val originalSender = sender // need to copy, as we we'll use it later in a future (andThen)
+      val originalSender = sender() // need to copy, as we we'll use it later in a future (andThen)
       tracker.reset()
       val future1 = (realBuilder ? msg)(Timeout(buildDuration))
       val future2 = future1.andThen {
@@ -80,7 +80,7 @@ class TimedBuildRunnerActor(builder: LocalBuildRunner, target: File,
               log.error(timeoutMsg)
               originalSender ! new BuildFailed(build.config.name, children, timeoutMsg) with TimedOut
             case _ =>
-              originalSender ! akka.actor.Status.Failure(e)
+              originalSender ! org.apache.pekko.actor.Status.Failure(e)
           }
       } (scala.concurrent.ExecutionContext.Implicits.global)
 

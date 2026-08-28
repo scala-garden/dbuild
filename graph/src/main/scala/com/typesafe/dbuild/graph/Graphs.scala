@@ -31,7 +31,7 @@ abstract class Graph[N, E] extends GraphCore[N, E] {
   }
 
   def tarjanSubGraphs: Set[Graph[N, E]] =
-    tarjan map { setEdges: Set[Node[N]] => FilteredByNodesGraph(setEdges) }
+    tarjan map { (setEdges: Set[Node[N]]) => FilteredByNodesGraph(setEdges) }
 
   // Note this is used to detect cycles. Breaks
   // the graph into strongly connected subgraphs.
@@ -81,7 +81,7 @@ abstract class Graph[N, E] extends GraphCore[N, E] {
       // I have no access to logging here, so I have to
       // create a long error message instead.
       // Nodes of the cycle, in the right order
-      val messages = (cycles map { comp: Set[Node[N]] =>
+      val messages = (cycles map { (comp: Set[Node[N]]) =>
         def connections(from: Node[N]) = {
           (edges(from) filter { n => comp.contains(n.to) } groupBy { _.to } flatMap { _._2 } map { _.toString }).mkString("", "\n", "\n")
         }

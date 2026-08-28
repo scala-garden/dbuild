@@ -1,35 +1,35 @@
 package com.typesafe.dbuild.project.dependencies
 
-import akka.actor.{ ActorRef, Actor, Props, PoisonPill, Terminated }
-import akka.util.Timeout
-import akka.pattern.ask
-import scala.concurrent.Await
-import scala.concurrent.duration._
-import com.typesafe.dbuild.model.{ ProjectBuildConfig, ExtractionConfig, ExtractionFailed, TimedOut }
-import _root_.java.io.File
-import sbt.io.Path._
-import sbt.io.syntax._
 import ExtractionDirs.projectExtractionDir
-import com.typesafe.dbuild.repo.core.GlobalDirs.extractionDir
-import com.typesafe.dbuild.model.CleanupExpirations
-import com.typesafe.dbuild.project.cleanup.Recycling._
-import sbt.io.{ IO, DirectoryFilter }
+import _root_.java.io.File
 import com.typesafe.dbuild.logging.Logger
 import Logger.prepareLogMsg
-import scala.util.{Success,Failure}
-import java.util.concurrent.TimeoutException
+import com.typesafe.dbuild.model.CleanupExpirations
+import com.typesafe.dbuild.model.{ ProjectBuildConfig, ExtractionConfig, ExtractionFailed, TimedOut }
+import com.typesafe.dbuild.project.cleanup.Recycling.*
+import com.typesafe.dbuild.repo.core.GlobalDirs.extractionDir
 import com.typesafe.dbuild.utils.TrackedProcessBuilder
+import java.util.concurrent.TimeoutException
+import org.apache.pekko.actor.{ ActorRef, Actor, Props, PoisonPill, Terminated }
+import org.apache.pekko.pattern.ask
+import org.apache.pekko.util.Timeout
+import sbt.io.Path.*
+import sbt.io.syntax.*
+import sbt.io.{ IO, DirectoryFilter }
+import scala.concurrent.Await
+import scala.concurrent.duration.*
+import scala.util.{Success,Failure}
 
 case class ExtractBuildDependencies(config: ExtractionConfig, uuidDir: String, log: Logger, debug: Boolean)
 
 class CleaningExtractionActor extends Actor {
   def receive = {
     case target: File =>
-      extractionDir(target).*(DirectoryFilter).get.foreach { d1 =>
+      extractionDir(target).*(DirectoryFilter).get().foreach { d1 =>
         if (markedForDeletion(d1))
           IO.delete(d1)
         else
-          IO.delete(projectExtractionDir(d1).*(DirectoryFilter).get.filter(markedForDeletion))
+          IO.delete(projectExtractionDir(d1).*(DirectoryFilter).get().filter(markedForDeletion))
       }
       self ! PoisonPill
   }
@@ -54,9 +54,9 @@ class ExtractorActor(e: Extractor, target: File, exp: CleanupExpirations, tracke
 
     // There are two levels in the hierarchy, so we mark for deletion first the nested
     // ones and, if all the content can be deleted, the outer one as well.
-    extractionDir(target).*(DirectoryFilter).get.foreach { d1 =>
+    extractionDir(target).*(DirectoryFilter).get().foreach { d1 =>
       if (!markedForDeletion(d1)) { // skip if already marked
-        val candidates = projectExtractionDir(d1).*(DirectoryFilter).get
+        val candidates = projectExtractionDir(d1).*(DirectoryFilter).get()
         val (delete, doNotDelete) = candidates.partition(upForDeletion(_, exp))
         if (doNotDelete.isEmpty) // everything can be deleted inside this dir, or there is
           prepareForDeletion(d1) // nothing left, so remove the dir
@@ -76,7 +76,7 @@ class ExtractorActor(e: Extractor, target: File, exp: CleanupExpirations, tracke
   def receive: Receive = {
     case ExtractBuildDependencies(build, uuidDir, log, debug) =>
       log info ("--== Extracting dependencies for %s ==--" format (build.buildConfig.name))
-      sender ! (try {
+      sender() ! (try {
         e.extract(extractionDir(target) / uuidDir, build, tracker, log, debug)
       } catch {
         case t:Throwable =>
@@ -92,7 +92,7 @@ class TimedExtractorActor(extractor: Extractor, target: File,
   val realExtractor = context.actorOf(Props(new ExtractorActor(extractor, target, exp, tracker)))
   def receive = {
     case msg@ExtractBuildDependencies(build, uuidDir, log, debug) =>
-      val originalSender = sender // need to copy, as we we'll use it later in a future (andThen)
+      val originalSender = sender() // need to copy, as we we'll use it later in a future (andThen)
       tracker.reset()
       val future1 = (realExtractor ? msg)(Timeout(extractionDuration))
       val future2 = future1.andThen {
@@ -111,7 +111,7 @@ class TimedExtractorActor(extractor: Extractor, target: File,
               log.error(timeoutMsg)
               originalSender ! new ExtractionFailed(build.buildConfig.name, Seq(), timeoutMsg) with TimedOut
             case _ =>
-              originalSender ! akka.actor.Status.Failure(e)
+              originalSender ! org.apache.pekko.actor.Status.Failure(e)
           }
       } (scala.concurrent.ExecutionContext.Implicits.global)
 

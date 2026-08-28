@@ -1,9 +1,10 @@
 package com.typesafe.dbuild.model
 
-import com.fasterxml.jackson.annotation.JsonProperty
-import com.typesafe.dbuild.model.Utils.{ readValue, writeValue }
-import org.apache.commons.lang.StringEscapeUtils
 import com.typesafe.config.ConfigFactory.parseString
+import com.typesafe.dbuild.model.Utils.{ readValue, writeValue }
+import io.circe.generic.semiauto.deriveEncoder
+import io.circe.{ Encoder, Json }
+import org.apache.commons.lang.StringEscapeUtils
 
 
 /**
@@ -21,6 +22,21 @@ sealed abstract class BuildOutcome {
   def status(): String
   /** a copy of this outcome, with replaced nested outcomes */
   def withOutcomes(os:Seq[BuildOutcome]):BuildOutcome
+}
+object BuildOutcome {
+  // BuildOutcome is only ever serialized (for debug printing / notification templates), never
+  // deserialized from JSON, so we only need an Encoder for the whole sealed hierarchy.
+  implicit lazy val buildOutcomeEncoder: Encoder[BuildOutcome] = Encoder.instance {
+    case o: BuildSuccess            => deriveEncoder[BuildSuccess].apply(o)
+    case o: BuildUnchanged          => deriveEncoder[BuildUnchanged].apply(o)
+    case o: BuildEmpty              => deriveEncoder[BuildEmpty].apply(o)
+    case o: BuildFailed             => deriveEncoder[BuildFailed].apply(o)
+    case o: BuildBrokenDependency   => deriveEncoder[BuildBrokenDependency].apply(o)
+    case o: ExtractionOK            => deriveEncoder[ExtractionOK].apply(o)
+    case o: ExtractionFailed        => deriveEncoder[ExtractionFailed].apply(o)
+    case o: TaskFailed              => deriveEncoder[TaskFailed].apply(o)
+    case o: UnexpectedOutcome       => deriveEncoder[UnexpectedOutcome].apply(o)
+  }
 }
 
 // this marker trait is only used internally, in order to

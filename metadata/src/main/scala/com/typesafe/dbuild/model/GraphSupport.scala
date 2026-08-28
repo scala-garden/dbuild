@@ -1,5 +1,5 @@
 package com.typesafe.dbuild.model
-import com.typesafe.dbuild.graph._
+import com.typesafe.dbuild.graph.*
 
 case class BuildNode(value: ProjectConfigAndExtracted) extends Node[ProjectConfigAndExtracted] {
   /**
@@ -30,18 +30,18 @@ case class BuildEdge(from: Node[ProjectConfigAndExtracted], to: BuildNode,
 }
 
 class BuildGraph(builds: Seq[ProjectConfigAndExtracted]) extends Graph[ProjectConfigAndExtracted, EdgeData] {
-  private val buildNodes = builds.map(b => new BuildNode(b))(collection.breakOut)
+  private val buildNodes = builds.map(b => new BuildNode(b))
   override val nodes: Set[Nd] = buildNodes.toSet
 
   private val nodeMap: Map[ProjectConfigAndExtracted, Node[ProjectConfigAndExtracted]] =
-    buildNodes.map(b => b.value -> b)(collection.breakOut)
+    buildNodes.map(b => b.value -> b).toMap
   def nodeFor(build: ProjectConfigAndExtracted): Option[Nd] = nodeMap.get(build)
   def nodeForName(name: String): Option[Nd] = nodes find (_.value.config.name == name)
 
   // Memoized ok?
   def edges(n: Nd): Seq[Ed] = edgeMap get n getOrElse Seq.empty
   private val edgeMap: Map[Nd, Seq[Ed]] =
-    buildNodes.map(n => n -> edgesImpl(n))(collection.breakOut)
+    buildNodes.map(n => n -> edgesImpl(n)).toMap
   private def edgesImpl(n: Nd): Seq[Ed] = {
     def projMetaWithSpaces(e: ProjectConfigAndExtracted) = {
       // associate each "from" space with the dependencies of that level

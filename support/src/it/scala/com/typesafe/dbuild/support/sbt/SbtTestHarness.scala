@@ -1,5 +1,5 @@
 package com.typesafe.dbuild.support.sbt
-import com.typesafe.dbuild.adapter.Adapter.IO
+import sbt.io.IO
 
 import java.io.File
 import java.net.URL

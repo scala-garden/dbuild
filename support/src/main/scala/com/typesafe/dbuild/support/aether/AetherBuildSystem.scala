@@ -16,49 +16,48 @@ package com.typesafe.dbuild.support.aether
  * *******************************************************************************
  */
 
-import com.typesafe.dbuild.support.BuildSystemCore
-import com.typesafe.dbuild.project.{ BuildSystem, BuildData }
-import com.typesafe.dbuild.model._
-import com.typesafe.dbuild.repo.core.LocalArtifactMissingException
-import com.typesafe.dbuild.utils.TrackedProcessBuilder
-import java.io.File
-import com.typesafe.dbuild.adapter.Adapter
-import Adapter.Path._
-import Adapter.{IO,allPaths}
-import Adapter.syntaxio._
-import com.typesafe.dbuild.logging.Logger
-import sys.process._
-import com.typesafe.dbuild.repo.core.LocalRepoHelper
-import com.typesafe.dbuild.model.Utils.readValue
-import xsbti.Predefined._
-import collection.JavaConversions._
-import collection.JavaConverters._
 import _root_.java.io.{ FileReader, FileWriter }
-import org.apache.ivy
-import ivy.Ivy
-import ivy.plugins.resolver.{ BasicResolver, ChainResolver, FileSystemResolver, IBiblioResolver, URLResolver }
-import ivy.core.settings.IvySettings
-import ivy.core.module.descriptor.{ DefaultModuleDescriptor, DefaultDependencyDescriptor, Artifact }
-import org.apache.ivy.plugins.parser.xml.XmlModuleDescriptorWriter
-import ivy.core.module.id.{ ModuleId, ModuleRevisionId }
-import ivy.core.resolve.{ ResolveEngine, ResolveOptions }
-import ivy.core.report.ResolveReport
-import org.apache.ivy.core.resolve.IvyNode
-import com.typesafe.dbuild.support.NameFixer.fixName
-import org.apache.ivy.core.module.descriptor.DefaultArtifact
-import com.typesafe.dbuild.support.ivy.IvyMachinery.PublishIvyInfo
-import com.typesafe.dbuild.project.dependencies.Extractor
+import _root_.sbt.io.Path.*
+import _root_.sbt.io.syntax.*
+import _root_.sbt.io.{ IO, ExactFilter }
+import collection.JavaConverters.*
+import com.typesafe.dbuild.adapter.Adapter.allPaths
+import com.typesafe.dbuild.logging.Logger
+import com.typesafe.dbuild.manifest.ModuleAttributes
+import com.typesafe.dbuild.manifest.ModuleInfo
+import com.typesafe.dbuild.model.*
+import com.typesafe.dbuild.model.Utils.readValue
 import com.typesafe.dbuild.project.build.LocalBuildRunner
+import com.typesafe.dbuild.project.dependencies.Extractor
+import com.typesafe.dbuild.project.{ BuildSystem, BuildData }
 import com.typesafe.dbuild.repo.core.GlobalDirs.dbuildHomeDir
+import com.typesafe.dbuild.repo.core.LocalArtifactMissingException
+import com.typesafe.dbuild.repo.core.LocalRepoHelper
+import com.typesafe.dbuild.support.BuildSystemCore
+import com.typesafe.dbuild.support.NameFixer.fixName
 import com.typesafe.dbuild.support.SbtUtil.pluginAttrs
 import com.typesafe.dbuild.support.assemble.AssembleBuildSystem
 import com.typesafe.dbuild.support.assemble.NamePatcher
 import com.typesafe.dbuild.support.assemble.OrgNameVerFilenamesuffix
-import com.typesafe.dbuild.manifest.ModuleAttributes
-import com.typesafe.dbuild.manifest.ModuleInfo
+import com.typesafe.dbuild.support.ivy.IvyMachinery.PublishIvyInfo
+import com.typesafe.dbuild.utils.TrackedProcessBuilder
+import java.io.File
+import org.apache.ivy
+import ivy.Ivy
+import ivy.core.module.descriptor.{ DefaultModuleDescriptor, DefaultDependencyDescriptor, Artifact }
+import ivy.core.module.id.{ ModuleId, ModuleRevisionId }
+import ivy.core.report.ResolveReport
+import ivy.core.resolve.{ ResolveEngine, ResolveOptions }
+import ivy.core.settings.IvySettings
+import ivy.plugins.resolver.{ BasicResolver, ChainResolver, FileSystemResolver, IBiblioResolver, URLResolver }
+import org.apache.ivy.core.module.descriptor.DefaultArtifact
+import org.apache.ivy.core.resolve.IvyNode
+import org.apache.ivy.plugins.parser.xml.XmlModuleDescriptorWriter
+import sys.process.*
+import xsbti.Predefined.*
 
-import org.apache.maven.model.{ Model, Dependency }
 import org.apache.maven.model.io.xpp3.{ MavenXpp3Reader, MavenXpp3Writer }
+import org.apache.maven.model.{ Model, Dependency }
 
 import org.eclipse.aether.DefaultRepositorySystemSession
 import org.eclipse.aether.RepositorySystem
@@ -68,8 +67,8 @@ import org.eclipse.aether.artifact.{ DefaultArtifact => AetherDefaultArtifact }
 import org.eclipse.aether.collection.CollectRequest
 import org.eclipse.aether.deployment.DeployRequest
 import org.eclipse.aether.deployment.DeploymentException
-import org.eclipse.aether.graph.{ Dependency => AetherDependency }
 import org.eclipse.aether.graph.DependencyNode
+import org.eclipse.aether.graph.{ Dependency => AetherDependency }
 import org.eclipse.aether.installation.InstallRequest
 import org.eclipse.aether.installation.InstallationException
 import org.eclipse.aether.repository.Authentication
@@ -77,12 +76,11 @@ import org.eclipse.aether.repository.LocalRepository
 import org.eclipse.aether.repository.RemoteRepository
 import org.eclipse.aether.resolution.DependencyRequest
 import org.eclipse.aether.resolution.DependencyResolutionException
+import org.eclipse.aether.transfer.ArtifactNotFoundException
 import org.eclipse.aether.util.graph.visitor.PreorderNodeListGenerator
 import org.eclipse.aether.util.repository.AuthenticationBuilder
-import org.eclipse.aether.transfer.ArtifactNotFoundException
 
 import org.apache.maven.repository.internal.MavenRepositorySystemUtils
-import org.eclipse.aether.RepositorySystem
 import org.eclipse.aether.connector.basic.BasicRepositoryConnectorFactory
 import org.eclipse.aether.impl.DefaultServiceLocator
 import org.eclipse.aether.spi.connector.RepositoryConnectorFactory
@@ -92,10 +90,9 @@ import org.eclipse.aether.transport.http.HttpTransporterFactory
 
 import org.eclipse.aether.AbstractRepositoryListener
 import org.eclipse.aether.RepositoryEvent
-import org.eclipse.aether.resolution.ArtifactRequest
-import org.eclipse.aether.graph.DependencyNode
 import org.eclipse.aether.resolution.ArtifactDescriptorRequest
 import org.eclipse.aether.resolution.ArtifactDescriptorResult
+import org.eclipse.aether.resolution.ArtifactRequest
 
 class ConsoleRepositoryListener(log: Logger) extends AbstractRepositoryListener {
   override def artifactDeployed(event: RepositoryEvent): Unit =
@@ -168,9 +165,7 @@ import org.eclipse.aether.transfer.TransferResource
  * A simplistic transfer listener that logs uploads/downloads to the console.
  */
 class ConsoleTransferListener(log: Logger) extends AbstractTransferListener {
-  // we cannot use scala.collection.concurrent.Map (TrieMap), as this code must compile under 2.9 as well
-  private val downloads =
-    new scala.collection.mutable.HashMap[TransferResource, Long] with scala.collection.mutable.SynchronizedMap[TransferResource, Long]
+  private val downloads = new scala.collection.concurrent.TrieMap[TransferResource, Long]
 
   override def transferInitiated(event: TransferEvent): Unit = {
     val message = if (event.getRequestType() == TransferEvent.RequestType.PUT) "Trying to upload" else "Trying to download"
@@ -248,7 +243,7 @@ object Booter {
     locator.addService(classOf[TransporterFactory], classOf[FileTransporterFactory])
     locator.addService(classOf[TransporterFactory], classOf[HttpTransporterFactory])
     locator.setErrorHandler(new DefaultServiceLocator.ErrorHandler() {
-      override def serviceCreationFailed(`type`: Class[_], impl: Class[_], exception: Throwable): Unit =
+      override def serviceCreationFailed(`type`: Class[?], impl: Class[?], exception: Throwable): Unit =
         {
           exception.printStackTrace();
         }
@@ -278,7 +273,7 @@ object Booter {
 /** Implementation of the Aether build system. workingDir is the "target" general dbuild dir */
 class AetherBuildSystem(repos: List[xsbti.Repository], workingDir: File) extends BuildSystemCore {
 
-  import Booter._
+  import Booter.*
   val name = "aether"
   type ExtraType = AetherExtraConfig
 
@@ -322,7 +317,7 @@ class AetherBuildSystem(repos: List[xsbti.Repository], workingDir: File) extends
     getJar: Boolean, getSource: Boolean, getJavadoc: Boolean,
     rematerializedRepo: Option[File], log: Logger) = {
 
-    import Booter._
+    import Booter.*
 
     // we resolve directly to the desired output location
     val localRepository = new LocalRepository(localRepo)
@@ -388,14 +383,14 @@ class AetherBuildSystem(repos: List[xsbti.Repository], workingDir: File) extends
     val sourceArt = getArtifact("jar", "sources")
     val javadocArt = getArtifact("jar", "javadoc")
 
-    val descriptorRequest = new ArtifactDescriptorRequest(jarArt, mavenRepositories, null)
+    val descriptorRequest = new ArtifactDescriptorRequest(jarArt, mavenRepositories.asJava, null)
     val descriptorResult = repositorySystem.readArtifactDescriptor(session, descriptorRequest)
     val pomOrigin = descriptorResult.getRepository // will be null if it didn't resolve
     if (pomOrigin == null) failure()
 
     def grab(doGrab: Boolean, inArt: AetherArtifact): Option[AetherArtifact] =
       if (!doGrab) None else Some({
-        val request = new ArtifactRequest(inArt, mavenRepositories, null)
+        val request = new ArtifactRequest(inArt, mavenRepositories.asJava, null)
         val outArtifact = repositorySystem.resolveArtifact(session, request).getArtifact
         val file = outArtifact.getFile
         if (file == null) failure()
@@ -418,7 +413,7 @@ class AetherBuildSystem(repos: List[xsbti.Repository], workingDir: File) extends
     baseDir: File, extractor: Extractor, log: Logger, debug: Boolean): ExtractedBuildMeta = {
     val config = extractionConfig.buildConfig
     val extra = config.getExtra[AetherExtraConfig]
-    import extra._
+    import extra.*
 
     val module = config.uri.substring(7)
     val modRevId = ModuleRevisionId.parse(module)
@@ -426,7 +421,7 @@ class AetherBuildSystem(repos: List[xsbti.Repository], workingDir: File) extends
     // we grab the pom only, directly in the extraction dir
     val (descriptorResult, arts) = resolveAether(modRevId, baseDir, mainJar, sources, javadoc, None, log)
     // only the direct dependencies
-    val dependencies = descriptorResult.getDependencies.toSeq
+    val dependencies = descriptorResult.getDependencies.asScala.toSeq
     if (dependencies.isEmpty)
       log.debug("There are no direct dependencies")
     else {
@@ -454,7 +449,7 @@ class AetherBuildSystem(repos: List[xsbti.Repository], workingDir: File) extends
   def runBuild(project: RepeatableProjectBuild, tracker: TrackedProcessBuilder, baseDir: File,
     input: BuildInput, localBuildRunner: LocalBuildRunner, buildData: BuildData): BuildArtifactsOut = {
     val extra = project.config.getExtra[AetherExtraConfig]
-    import extra._
+    import extra.*
 
     val log = buildData.log
     log.debug("BuildInput is: " + input)
@@ -520,12 +515,12 @@ class AetherBuildSystem(repos: List[xsbti.Repository], workingDir: File) extends
     // the pom art will be the first one in "arts"
     val (descriptorResult, arts) = resolveAether(download, localRepo, mainJar, sources, javadoc, Some(availableRepo), log)
     // DELETE from the resolved local repository all files called "_remote.repositories", which are aether temporary leftovers
-    localRepo.**(new Adapter.ExactFilter("_remote.repositories")).get.foreach { IO.delete }
+    localRepo.**(new ExactFilter("_remote.repositories")).get().foreach { IO.delete }
 
     // TODO: add support for source/javadoc/etc jars, as well as plugins.
 
     log.debug("List of dependencies from the pom file:")
-    descriptorResult.getDependencies foreach {
+    descriptorResult.getDependencies.asScala foreach {
       d => log.debug("  " + d.toString)
       // TODO: inspect "checkMissing", and try to locate each dependency in
       // the availableArts list. If the combination of crossVersion and checkMissing
@@ -613,7 +608,7 @@ class AetherBuildSystem(repos: List[xsbti.Repository], workingDir: File) extends
     //BuildSubArtifactsOut(subProjName, artifacts, shas, moduleInfo)
     val q = BuildArtifactsOut(Seq(BuildSubArtifactsOut("default-aether-project",
       arts.map { aetherArtifactToArtifactLocation },
-      allPaths(localRepo).get.filterNot(file => file.isDirectory) map { LocalRepoHelper.makeArtifactSha(_, localRepo) },
+      allPaths(localRepo).get().filterNot(file => file.isDirectory) map { LocalRepoHelper.makeArtifactSha(_, localRepo) },
       ModuleInfo(organization = finalModRevId.getOrganisation,
         name = trimName, version = finalModRevId.getRevision, {
           // We need to calculate CrossBuildProperties; that is made a bit complicated by the fact that

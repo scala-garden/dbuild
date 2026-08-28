@@ -1,11 +1,8 @@
 package com.typesafe.dbuild.model
 
-import org.specs2.mutable.Specification
+import SeqDepsModifiersH.*
 import Utils.{writeValue,readValue}
-import SeqDepsModifiersH._
-
-import com.lambdaworks.jacks._
-import JacksOption._
+import org.specs2.mutable.Specification
 
 object RepeatableDBuildConfigSpec extends Specification {
 
@@ -96,12 +93,12 @@ object RepeatableDBuildConfigSpec extends Specification {
       result must equalTo(sample)
     }
     "Make unique project build UUID" in {
-      val uuids: Set[String] = (sample.repeatableBuilds map (_.uuid))(collection.breakOut)
+      val uuids: Set[String] = sample.repeatableBuilds.map(_.uuid).toSet
       uuids.size must equalTo(5)
     }
     "Must make repeatable UUIDs" in {
-      val uuids: Set[String] = (sample.repeatableBuilds map (_.uuid))(collection.breakOut)
-      val uuids2: Set[String] = (sample2.repeatableBuilds map (_.uuid))(collection.breakOut)
+      val uuids: Set[String] = sample.repeatableBuilds.map(_.uuid).toSet
+      val uuids2: Set[String] = sample2.repeatableBuilds.map(_.uuid).toSet
       val union = uuids & uuids2
       union.size must equalTo(3)
     }

@@ -1,37 +1,37 @@
 package com.typesafe.dbuild.support.ivy
 
-import com.typesafe.dbuild.support.BuildSystemCore
+import _root_.sbt.io.IO
+import _root_.sbt.io.Path.*
+import _root_.sbt.io.syntax.*
+import com.typesafe.dbuild.adapter.Adapter.allPaths
+import com.typesafe.dbuild.logging.Logger
+import com.typesafe.dbuild.model.*
+import com.typesafe.dbuild.model.Utils.readValue
+import com.typesafe.dbuild.project.build.LocalBuildRunner
+import com.typesafe.dbuild.project.dependencies.Extractor
 import com.typesafe.dbuild.project.{ BuildSystem, BuildData }
-import com.typesafe.dbuild.model._
+import com.typesafe.dbuild.repo.core.GlobalDirs.dbuildHomeDir
 import com.typesafe.dbuild.repo.core.LocalArtifactMissingException
+import com.typesafe.dbuild.repo.core.LocalRepoHelper
+import com.typesafe.dbuild.support.BuildSystemCore
+import com.typesafe.dbuild.support.NameFixer.fixName
+import com.typesafe.dbuild.support.SbtUtil.pluginAttrs
+import com.typesafe.dbuild.support.ivy.IvyMachinery.PublishIvyInfo
 import com.typesafe.dbuild.utils.TrackedProcessBuilder
 import java.io.File
-import com.typesafe.dbuild.adapter.Adapter
-import Adapter.Path._
-import Adapter.{IO,allPaths}
-import Adapter.syntaxio._
-import com.typesafe.dbuild.logging.Logger
-import sys.process._
-import com.typesafe.dbuild.repo.core.LocalRepoHelper
-import com.typesafe.dbuild.model.Utils.readValue
-import xsbti.Predefined._
 import org.apache.ivy
 import ivy.Ivy
-import ivy.plugins.resolver.{ BasicResolver, ChainResolver, FileSystemResolver, IBiblioResolver, URLResolver }
-import ivy.core.settings.IvySettings
 import ivy.core.module.descriptor.{ DefaultModuleDescriptor, DefaultDependencyDescriptor, Artifact }
-import org.apache.ivy.plugins.parser.xml.XmlModuleDescriptorWriter
 import ivy.core.module.id.{ ModuleId, ModuleRevisionId }
-import ivy.core.resolve.{ ResolveEngine, ResolveOptions }
 import ivy.core.report.ResolveReport
-import org.apache.ivy.core.resolve.IvyNode
-import com.typesafe.dbuild.support.NameFixer.fixName
+import ivy.core.resolve.{ ResolveEngine, ResolveOptions }
+import ivy.core.settings.IvySettings
+import ivy.plugins.resolver.{ BasicResolver, ChainResolver, FileSystemResolver, IBiblioResolver, URLResolver }
 import org.apache.ivy.core.module.descriptor.DefaultArtifact
-import com.typesafe.dbuild.support.ivy.IvyMachinery.PublishIvyInfo
-import com.typesafe.dbuild.project.dependencies.Extractor
-import com.typesafe.dbuild.project.build.LocalBuildRunner
-import com.typesafe.dbuild.repo.core.GlobalDirs.dbuildHomeDir
-import com.typesafe.dbuild.support.SbtUtil.pluginAttrs
+import org.apache.ivy.core.resolve.IvyNode
+import org.apache.ivy.plugins.parser.xml.XmlModuleDescriptorWriter
+import sys.process.*
+import xsbti.Predefined.*
 
 /** Implementation of the Ivy build system. workingDir is the "target" general dbuild dir */
 class IvyBuildSystem(repos: List[xsbti.Repository], workingDir: File) extends BuildSystemCore {
@@ -62,13 +62,13 @@ class IvyBuildSystem(repos: List[xsbti.Repository], workingDir: File) extends Bu
     } else {
       val modRevId = artifactReports(0).getArtifact.getModuleRevisionId
       val module = modRevId.getModuleId()
-      import scala.collection.JavaConversions._
+      import scala.jdk.CollectionConverters.*
       def artifactToProjectRef(a: Artifact) = {
         val m = a.getModuleRevisionId.getModuleId
         val tpe = a.getType
         ProjectRef(fixName(m.getName), m.getOrganisation, a.getExt, if (tpe != "jar") Some(tpe) else None)
       }
-      val nodes = report.getDependencies().asInstanceOf[_root_.java.util.List[IvyNode]].toSeq
+      val nodes = report.getDependencies().asInstanceOf[_root_.java.util.List[IvyNode]].asScala.toSeq
       val firstNode = nodes(0)
       val first = firstNode.getModuleId
       // the first element of "loaded", below, is the module that we have just resolved; in principle
@@ -134,7 +134,7 @@ class IvyBuildSystem(repos: List[xsbti.Repository], workingDir: File) extends Bu
     // this is transitive = false, only used to retrieve the jars that should be republished later
     val response = IvyMachinery.resolveIvy(newProjectConfig, baseDir, repos, log, transitive = false)
     val report = response.report
-    import scala.collection.JavaConversions._
+    import scala.jdk.CollectionConverters.*
     def artifactToArtifactLocation(a: Artifact) = {
       val mr = a.getModuleRevisionId
       val m = mr.getModuleId
@@ -145,7 +145,7 @@ class IvyBuildSystem(repos: List[xsbti.Repository], workingDir: File) extends Bu
       ArtifactLocation(ProjectRef(trimName, m.getOrganisation, a.getExt, classifier), version /*mr.getRevision*/ , cross, pluginAttrs(mr))
     }
 
-    val nodes = report.getDependencies().asInstanceOf[_root_.java.util.List[IvyNode]].toSeq
+    val nodes = report.getDependencies().asInstanceOf[_root_.java.util.List[IvyNode]].asScala.toSeq
     val firstNode = nodes(0)
     val publishArts = firstNode.getAllArtifacts.map(artifactToArtifactLocation).distinct
 
@@ -157,7 +157,7 @@ class IvyBuildSystem(repos: List[xsbti.Repository], workingDir: File) extends Bu
     val modulePluginInfo = pluginAttrs(module)
     val q = BuildArtifactsOut(Seq(BuildSubArtifactsOut("default-ivy-project",
       publishArts,
-      allPaths(localRepo).get.filterNot(file => file.isDirectory) map { LocalRepoHelper.makeArtifactSha(_, localRepo) },
+      allPaths(localRepo).get().filterNot(file => file.isDirectory) map { LocalRepoHelper.makeArtifactSha(_, localRepo) },
       com.typesafe.dbuild.manifest.ModuleInfo(organization = module.getOrganisation,
         name = fixName(module.getName), version = version, {
           import com.typesafe.dbuild.manifest.ModuleAttributes
@@ -186,7 +186,7 @@ class IvyBuildSystem(repos: List[xsbti.Repository], workingDir: File) extends Bu
   private def checkDependencies(project: RepeatableProjectBuild, baseDir: File, input: BuildInput, log: Logger): Seq[PublishIvyInfo] = {
     // I can run a check to verify that libraries that are cross-versioned (and therefore Scala-based) 
     // have been made available via BuildArtifactsIn. If not, emit a message and possibly stop.
-    import scala.collection.JavaConversions._
+    import scala.jdk.CollectionConverters.*
     val crossVersion = project.config.getCrossVersionHead
     val checkMissing = project.config.getCheckMissingHead
     val arts = input.artifacts.artifacts
@@ -195,7 +195,7 @@ class IvyBuildSystem(repos: List[xsbti.Repository], workingDir: File) extends Bu
     // to extract it here again, so that additional artifact-related details are available.
     val response = IvyMachinery.resolveIvy(project.config, baseDir, repos, log)
     val report = response.report
-    val nodes = report.getDependencies().asInstanceOf[_root_.java.util.List[IvyNode]].toSeq
+    val nodes = report.getDependencies().asInstanceOf[_root_.java.util.List[IvyNode]].asScala.toSeq
     val firstNode = nodes(0)
     val first = firstNode.getModuleId
     // We skip the first element (the artifacts resolved) and keep only the dependencies
@@ -222,7 +222,7 @@ class IvyBuildSystem(repos: List[xsbti.Repository], workingDir: File) extends Bu
             if fixName(artifact.info.name) == fixName(a.getName)
             if artifact.info.extension == a.getExt
           } yield artifact).headOption
-        def printIvyDependency(someArt: Option[ArtifactLocation]) {
+        def printIvyDependency(someArt: Option[ArtifactLocation]): Unit = {
           log.info("  " + a.getModuleRevisionId.getOrganisation + "#" + a.getName + ";" + a.getModuleRevisionId.getRevision +
             (someArt map { art =>
               " --> " + art.info.organization + "#" + art.info.name + art.crossSuffix + ";" + art.version

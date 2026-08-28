@@ -1,5 +1,8 @@
 package com.typesafe.dbuild.manifest
 
+import io.circe.generic.semiauto.{ deriveEncoder, deriveDecoder }
+import io.circe.{ Encoder, Decoder }
+
 /**
 * Represents the information for a given Ivy module within the Lightbend Reactive Platform (v1, no longer in use)
 *
@@ -16,6 +19,10 @@ case class ModuleInfo(
   name: String,
   version: String,
   attributes: ModuleAttributes)
+object ModuleInfo {
+  implicit val moduleInfoEncoder: Encoder[ModuleInfo] = deriveEncoder[ModuleInfo]
+  implicit val moduleInfoDecoder: Decoder[ModuleInfo] = deriveDecoder[ModuleInfo]
+}
 
 /** This represents the cross-building components of modules which will be used during
 * resolution.
@@ -41,3 +48,10 @@ case class ModuleInfo(
 *
 */
 case class ModuleAttributes(scalaVersion: Option[String], sbtVersion: Option[String])
+object ModuleAttributes {
+  implicit val moduleAttributesEncoder: Encoder[ModuleAttributes] = Encoder.AsObject.instance { a =>
+    io.circe.JsonObject.fromIterable(
+      deriveEncoder[ModuleAttributes].encodeObject(a).toIterable.filterNot(_._2.isNull))
+  }
+  implicit val moduleAttributesDecoder: Decoder[ModuleAttributes] = deriveDecoder[ModuleAttributes]
+}

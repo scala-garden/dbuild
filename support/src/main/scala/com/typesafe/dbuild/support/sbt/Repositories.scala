@@ -1,9 +1,9 @@
 package com.typesafe.dbuild.support.sbt
 
-import com.typesafe.dbuild.model._
 import _root_.java.io.File
 import _root_.java.net.{ URI, URL }
-import com.typesafe.dbuild.adapter.Adapter.IO
+import _root_.sbt.io.IO
+import com.typesafe.dbuild.model.*
 
 object Repositories {
   val ivyPattern = "[organization]/[module]/(scala_[scalaVersion]/)(sbt_[sbtVersion]/)[revision]/[type]s/[artifact](-[classifier]).[ext]"

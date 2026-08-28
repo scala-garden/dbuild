@@ -18,5 +18,5 @@ declare -r SCRIPT_DIR="$(dirname $SCRIPT_PATH)"
 java -Xss16M \
   -Dsbt.boot.properties=$SCRIPT_DIR/dbuild.properties \
   -Djline.shutdownhook=true \
-  -jar $SCRIPT_DIR/dbuild-launcher.jar \
+  -jar $SCRIPT_DIR/sbt-launcher.jar \
   $@

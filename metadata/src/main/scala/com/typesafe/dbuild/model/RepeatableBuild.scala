@@ -1,9 +1,11 @@
 package com.typesafe.dbuild.model
 
+import CirceSupport.{ *, given }
 import Utils.{ writeValue, canSeeSpace }
-import com.fasterxml.jackson.annotation.JsonProperty
 import com.typesafe.dbuild.hashing
-import com.typesafe.dbuild.model.SeqStringH._
+import com.typesafe.dbuild.model.SeqStringH.*
+import io.circe.generic.semiauto.{ deriveEncoder, deriveDecoder }
+import io.circe.{ Encoder, Decoder }
 
 /**
  * Information on how to build a project.  Consists of both dbuild
@@ -13,9 +15,18 @@ import com.typesafe.dbuild.model.SeqStringH._
  * Note that the global build options are not included, therefore this is not
  * the entire information that can guarantee a unique build.
  */
+/** Common trait for metadata classes that carry a repeatability UUID, used by LocalRepoHelper.publishMeta. */
+trait HasUuid {
+  def uuid: String
+}
+
 case class ProjectConfigAndExtracted(config: ProjectBuildConfig, extracted: ExtractedBuildMeta) {
   // in theory space should never be None
   def getSpace = config.space getOrElse sys.error("Internal error: space is None in " + config.name)
+}
+object ProjectConfigAndExtracted {
+  implicit val projectConfigAndExtractedEncoder: Encoder[ProjectConfigAndExtracted] = deriveEncoder[ProjectConfigAndExtracted]
+  implicit val projectConfigAndExtractedDecoder: Decoder[ProjectConfigAndExtracted] = deriveDecoder[ProjectConfigAndExtracted]
 }
 
 /**
@@ -38,15 +49,19 @@ case class ProjectConfigAndExtracted(config: ProjectBuildConfig, extracted: Extr
  */
 case class RepeatableProjectBuild(configAndExtracted: ProjectConfigAndExtracted,
   // see below the description of RepeatableDepInfo for details
-  depInfo: Seq /*Levels*/ [RepeatableDepInfo]) {
+  depInfo: Seq /*Levels*/ [RepeatableDepInfo]) extends HasUuid {
   /** UUID for this project. */
   def uuid = hashing sha1 this
 
   // shortcut to the ProjectBuildConfig
   def config = configAndExtracted.config
 
-  def extra[T](implicit m: Manifest[T]) = configAndExtracted.config.getExtra[T]
+  def extra[T] = configAndExtracted.config.getExtra[T]
   def getCommit = configAndExtracted.config.getCommit
+}
+object RepeatableProjectBuild {
+  implicit val repeatableProjectBuildEncoder: Encoder[RepeatableProjectBuild] = deriveEncoder[RepeatableProjectBuild]
+  implicit val repeatableProjectBuildDecoder: Decoder[RepeatableProjectBuild] = deriveDecoder[RepeatableProjectBuild]
 }
 
 /**
@@ -56,7 +71,7 @@ case class RepeatableProjectBuild(configAndExtracted: ProjectConfigAndExtracted,
  * levels reflect the fromStream sequence in the project space descriptor.
  */
 case class RepeatableDepInfo(
-  @JsonProperty("base-version") baseVersion: String,
+  baseVersion: String,
   // The list of dependencies is transitive (within the boundaries
   // of the relevant spaces, see below)
   dependencyNames: Seq[String], // names corresponding to a RepeatableProjectBuild
@@ -66,6 +81,12 @@ case class RepeatableDepInfo(
   // assumption anywhere that they should be kept in sync. If that need should arise,
   // the two Seqs should probably be converted into a Seq[(String,String)].
 )
+object RepeatableDepInfo {
+  implicit val repeatableDepInfoEncoder: Encoder[RepeatableDepInfo] =
+    renamedEnc("baseVersion" -> "base-version")(deriveEncoder[RepeatableDepInfo])
+  implicit val repeatableDepInfoDecoder: Decoder[RepeatableDepInfo] =
+    renamedDec("baseVersion" -> "base-version")(deriveDecoder[RepeatableDepInfo])
+}
 
 object RepeatableDBuildConfigH {
   def fromExtractionOutcome(outcome: ExtractionOK) = RepeatableDBuildConfig(outcome.pces)
@@ -75,6 +96,10 @@ object RepeatableDBuildConfigH {
  *  Also known as the repeatable config. Note that notifications
  *  are not included, as they have no effect on builds.
  */
+object RepeatableDBuildConfig {
+  implicit val repeatableDBuildConfigEncoder: Encoder[RepeatableDBuildConfig] = deriveEncoder[RepeatableDBuildConfig]
+  implicit val repeatableDBuildConfigDecoder: Decoder[RepeatableDBuildConfig] = deriveDecoder[RepeatableDBuildConfig]
+}
 case class RepeatableDBuildConfig(builds: Seq[ProjectConfigAndExtracted]) {
   def repeatableBuildConfig = DBuildConfig(builds map (_.config), options = None)
   /** The unique SHA for this build. */
@@ -146,7 +171,9 @@ case class RepeatableDBuildConfig(builds: Seq[ProjectConfigAndExtracted]) {
         // this could probably be further optimized,
         // but hopefully the collision sets are of modest size
         for {
-          List(one, two) <- origins.combinations(2)
+          pair <- origins.combinations(2).toSeq
+          one = pair(0)
+          two = pair(1)
           colliding <- Utils.collidingSeqSpaces(one.spaces, two.spaces)
         } yield (org, name, one.fromProject, two.fromProject, colliding)
     }
@@ -162,6 +189,10 @@ case class RepeatableDBuildConfig(builds: Seq[ProjectConfigAndExtracted]) {
 }
 
 // This is the structure that is saved in meta/build
-case class SavedConfiguration(expandedDBuildConfig: DBuildConfiguration, fullBuild: RepeatableDBuildConfig) {
+case class SavedConfiguration(expandedDBuildConfig: DBuildConfiguration, fullBuild: RepeatableDBuildConfig) extends HasUuid {
   def uuid = hashing sha1 this
+}
+object SavedConfiguration {
+  implicit val savedConfigurationEncoder: Encoder[SavedConfiguration] = deriveEncoder[SavedConfiguration]
+  implicit val savedConfigurationDecoder: Decoder[SavedConfiguration] = deriveDecoder[SavedConfiguration]
 }

@@ -1,18 +1,20 @@
 package com.typesafe.dbuild.support.sbt
 
 import _root_.java.io.File
-import com.typesafe.dbuild.adapter.{Adapter,Defaults}
-import Adapter.{ IO, Path, toFF, Logger => SbtLogger }
-import Adapter.syntaxio._
-import Path._
+import _root_.sbt.io.FileFilter.{ globFilter => toFF }
+import _root_.sbt.io.syntax.*
+import _root_.sbt.io.{ IO, Path }
+import _root_.sbt.util.{ Logger => SbtLogger }
+import com.typesafe.dbuild.adapter.Defaults
 import com.typesafe.dbuild.logging.Logger
-import sys.process._
-import com.typesafe.dbuild.model.ExtraConfig
-import org.apache.commons.io.FileUtils.readFileToString
-import com.typesafe.dbuild.model.Utils.{ readValue, writeValue }
-import org.apache.commons.io.FileUtils.writeStringToFile
 import com.typesafe.dbuild.logging.Logger.logFullStackTrace
+import com.typesafe.dbuild.model.ExtraConfig
+import com.typesafe.dbuild.model.Utils.{ readValue, writeValue }
 import com.typesafe.dbuild.utils.TrackedProcessBuilder
+import org.apache.commons.io.FileUtils.readFileToString
+import org.apache.commons.io.FileUtils.writeStringToFile
+import sys.process.*
+import Path.*
 
 /**
  * A runner for SBT.
@@ -22,9 +24,11 @@ class SbtRunner(repos: List[xsbti.Repository], globalBase: File, debug: Boolean)
   private val launcherJar = SbtRunner.initSbtGlobalBase(globalBase, debug)
 
   private val defaultProps =
-    Map("sbt.global.base" -> globalBase.getAbsolutePath,
-      "sbt.override.build.repos" -> "true",
-      "sbt.log.noformat" -> "true")
+    Map(
+      "sbt.global.base" -> globalBase.getAbsolutePath,
+      "sbt.coursier.home" -> (globalBase / "coursier").getAbsolutePath,
+      "sbt.log.noformat" -> "true",
+    )
 
   def localIvyProps: Map[String, String] =
     Map("sbt.ivy.home" -> (globalBase / ".ivy2").getAbsolutePath)
@@ -66,7 +70,8 @@ class SbtRunner(repos: List[xsbti.Repository], globalBase: File, debug: Boolean)
     IO.withTemporaryFile("sbtrunner", "lastExceptionMessage") { lastMsg =>
       val cmd = SbtRunner.makeShell(
         launcherJar.getAbsolutePath,
-        defaultProps + ("dbuild.sbt-runner.last-msg" -> lastMsg.getCanonicalPath,
+        defaultProps + ("sbt.override.build.repos" -> "true",
+          "dbuild.sbt-runner.last-msg" -> lastMsg.getCanonicalPath,
           "sbt.version" -> useSbtVersion),
         javaProps,
         extraArgs)(args: _*)
@@ -112,7 +117,7 @@ class SbtRunner(repos: List[xsbti.Repository], globalBase: File, debug: Boolean)
       val lines = scala.io.Source.fromFile(buildProps).getLines
       val regex = " *sbt.version *= *([^ ]*) *".r
       val sbtVer = (for {
-        regex(v) <- lines
+        case regex(v) <- lines
       } yield v).toList.headOption
       sbtVer
     } else None
@@ -142,7 +147,7 @@ object SbtRunner {
   }
 
   private def makeArgsFromProps(props: Map[String, String]): Seq[String] =
-    props.map { case (k, v) => "-D%s=%s" format (k, v) } { collection.breakOut }
+    props.map { case (k, v) => "-D%s=%s" format (k, v) }.toSeq
 
   def makeShell(launcherJar: String,
     defaultProps: Map[String, String],
@@ -177,7 +182,7 @@ object SbtRunner {
   def buildLevels(dir: File): Int = {
     val sub = dir / "project"
     val subSub = sub / "project"
-    if (sub.isDirectory && (sub.*(toFF("*.sbt")).get.nonEmpty || (subSub.isDirectory() && sub.*(toFF("*.scala")).get.nonEmpty)))
+    if (sub.isDirectory && (sub.*(toFF("*.sbt")).get().nonEmpty || (subSub.isDirectory() && sub.*(toFF("*.scala")).get().nonEmpty)))
       buildLevels(sub) + 1
     else 1
   }
@@ -236,7 +241,7 @@ object SbtRunner {
     val repositoriesFileName = "repositories"
   }
 
-  import SbtFileNames._
+  import SbtFileNames.*
   /////////////////////////////////////////////////////
   //
   // Below, utilities used by SbtExtractor and SbtBuilder
@@ -284,7 +289,7 @@ object SbtRunner {
    * in dir/.dbuild, the second in dir/project/.dbuild, the dir/project/project/.dbuild,
    * and so on.
    */
-  def placeInputFiles[T](mainDir: File, fileName: String, data: Seq[T], log: SbtLogger, debug: Boolean)(implicit m: Manifest[T]) =
+  def placeInputFiles[T](mainDir: File, fileName: String, data: Seq[T], log: SbtLogger, debug: Boolean)(implicit e: io.circe.Encoder[T]) =
     placeFiles(mainDir, data.map { writeValue(_) }, fileName, Some(dbuildSbtDirName), s => if (debug) log.debug("Placing one input file in " + s))
 
   def rewireInputFile(dir: File) = dir / dbuildSbtDirName / rewireInputFileName
@@ -301,7 +306,7 @@ object SbtRunner {
   /**
    * Collect the output files from the various dirs, and return them as a sequence.
    */
-  def collectOutputFiles[T](mainDir: File, fileName: String, levels: Int, log: Logger, debug: Boolean)(implicit m: Manifest[T]): Seq[T] = {
+  def collectOutputFiles[T](mainDir: File, fileName: String, levels: Int, log: Logger, debug: Boolean)(implicit d: io.circe.Decoder[T]): Seq[T] = {
     def scan(left: Int, dir: File): Seq[T] = {
       if (left > 0) {
         val file = dir / dbuildSbtDirName / fileName
@@ -325,18 +330,18 @@ object SbtRunner {
    * If quiet, then silence Ivy resolution
    */
   def ivyQuiet(debug: Boolean) =
-    if (debug) "ivyLoggingLevel in Global := UpdateLogging.Full\n\n" else "ivyLoggingLevel in Global := UpdateLogging.Quiet\n\n"
+    if (debug) "Global / ivyLoggingLevel := UpdateLogging.Full\n\n" else "Global / ivyLoggingLevel := UpdateLogging.Quiet\n\n"
 
   /**
    * The string needed to load the dbuild plugin
    */
   val addDBuildPlugin =
-    """dependencyOverrides in ThisBuild += "org.scala-lang.modules" %% "scala-xml" % "2.1.0"""" + "\n\n" +
+    """ThisBuild / dependencyOverrides += "org.scala-lang.modules" %% "scala-xml" % "2.1.0"""" + "\n\n" +
     """addSbtPlugin("com.typesafe.dbuild" % "plugin" % """ + '"' + Defaults.version + "\")\n\n"
 
   /** Perform a state transformation using onLoad() */
   def onLoad(activity: String) = {
-    "onLoad in Global ~= (previousOnLoad => previousOnLoad andThen (state => { " + activity + " }))\n\n"
+    "Global / onLoad ~= (previousOnLoad => previousOnLoad andThen (state => { " + activity + " }))\n\n"
   }
 
   // stuff related to generateArtifacts()

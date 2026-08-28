@@ -1,33 +1,32 @@
 package com.typesafe.dbuild.build
 
-import java.io.File
-import com.typesafe.dbuild.model.DBuildConfiguration
-import com.typesafe.dbuild.model.Utils.{ writeValue, readValue, readProperties }
-import com.typesafe.dbuild.model.ClassLoaderMadness
-import com.typesafe.dbuild.model.{ BuildOutcome, BuildBad }
-import com.typesafe.dbuild.model.TemplateFormatter
-import com.typesafe.dbuild.model.CleanupOptions
-import com.typesafe.dbuild.model.Timeouts
-import java.util.Properties
+import collection.JavaConverters.*
+import collection.immutable.SortedMap
 import com.typesafe.config.ConfigFactory
+import com.typesafe.config.ConfigRenderOptions
 import com.typesafe.config.ConfigValueFactory
+import com.typesafe.config.{ ConfigSyntax, ConfigFactory, ConfigParseOptions }
+import com.typesafe.dbuild.adapter.Defaults
+import com.typesafe.dbuild.model.ClassLoaderMadness
+import com.typesafe.dbuild.model.CleanupOptions
+import com.typesafe.dbuild.model.DBuildConfiguration
+import com.typesafe.dbuild.model.SeqDBCH.*
+import com.typesafe.dbuild.model.SeqStringH.*
+import com.typesafe.dbuild.model.TemplateFormatter
+import com.typesafe.dbuild.model.Timeouts
 import com.typesafe.dbuild.model.Utils.readValueT
+import com.typesafe.dbuild.model.Utils.{ writeValue, readValue, readProperties }
+import com.typesafe.dbuild.model.{ BuildOutcome, BuildBad }
+import com.typesafe.dbuild.support.sbt.Repositories
 import com.typesafe.dbuild.utils.Time.timed
 import com.typesafe.dbuild.utils.TrackedProcessBuilder
-import collection.immutable.SortedMap
-import com.typesafe.dbuild.adapter.Defaults
-import com.typesafe.dbuild.support.sbt.Repositories
-import com.typesafe.config.{ ConfigSyntax, ConfigFactory, ConfigParseOptions }
-import org.rogach.scallop._
-import org.rogach.scallop.exceptions.ScallopException
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Locale
+import java.util.Properties
 import java.util.TimeZone
-import collection.JavaConverters._
-import scala.collection.JavaConversions._
-import com.typesafe.config.ConfigRenderOptions
-import com.typesafe.dbuild.model.SeqDBCH._
-import com.typesafe.dbuild.model.SeqStringH._
+import org.rogach.scallop.*
+import org.rogach.scallop.exceptions.ScallopException
 
 /**
  * These options are created by SbtBuildMain, and are propagated to most stages of building, as
@@ -47,8 +46,8 @@ class SbtBuildMain extends xsbti.AppMain {
     } catch {
       case e: java.io.IOException => false
     }
-    if (result) println(url + " has xsbti.Logger class")
-    else println(url + " - nada")
+    if (result) println(url.toString + " has xsbti.Logger class")
+    else println(url.toString + " - nada")
   }
 
   def printClassLoaders(cl: ClassLoader): Unit = cl match {
@@ -82,6 +81,18 @@ class SbtBuildMain extends xsbti.AppMain {
     // first thing upon start, in sbt/launch/src/main/scala/xsbt/boot/Boot.scala)
     //
     val args = configuration.arguments
+    // Named (rather than anonymous) so that its extra members (uuid/project/path) remain
+    // visible on "checkout"/"conf.checkout" -- Scala 3 does not infer a structural/refined
+    // type for a val initialized from "new Subcommand(...) { ... }", unlike Scala 2.
+    class CheckoutSubcommand extends Subcommand("checkout") {
+      banner("""Use "dbuild checkout" to check out one project from a previously compiled
+               |build, preparing sbt for a debugging session.
+               |Options:
+               |""".stripMargin)
+      val uuid = trailArg[String](descr = "UUID of the build")
+      val project = trailArg[String](descr = "name of the project")
+      val path = trailArg[String](descr = "path into which the source will be checked out")
+    }
     object conf extends ScallopConf(args.toList) {
       printedName = "dbuild"
       version("Typesafe dbuild " + Defaults.version + "   (" + Defaults.hash.take(12) + ")")
@@ -98,15 +109,7 @@ class SbtBuildMain extends xsbti.AppMain {
       val noResolvers = opt[Boolean](short = 'r', descr = "Disable the parsing of the \"options.resolvers\" section from the dbuild configuration file: only use the resolvers defined in dbuild.properties")
       val noNotify = opt[Boolean](short = 'n', descr = "Disable the notifications defined in the configuration file, and only print a report on the console")
       val local = opt[Boolean](short = 'l', descr = "Equivalent to: --no-resolvers --no-notify")
-      val checkout = new Subcommand("checkout") {
-        banner("""Use "dbuild checkout" to check out one project from a previously compiled
-                 |build, preparing sbt for a debugging session.
-                 |Options:
-                 |""".stripMargin)
-        val uuid = trailArg[String](descr = "UUID of the build")
-        val project = trailArg[String](descr = "name of the project")
-        val path = trailArg[String](descr = "path into which the source will be checked out")
-      }
+      val checkout = new CheckoutSubcommand
       conflicts(noNotify, List(checkout.uuid, checkout.project, checkout.path))
       conflicts(local, List(checkout.uuid, checkout.project, checkout.path))
       // requireOne(checkout.uuid,configFile) // use manual checking (below) to get a better error message
@@ -171,7 +174,7 @@ class SbtBuildMain extends xsbti.AppMain {
             // Parse them even if useLocalResolvers==true, in order to catch definition errors
             val explicitResolvers = SortedMap[String, (String, Option[String])]() ++
               (if (resolvedConfig.hasPath("options.resolvers")) {
-                import collection.JavaConverters._
+                import collection.JavaConverters.*
                 val map = resolvedConfig.getObject("options.resolvers").unwrapped().asScala
                 map.map {
                   case (k, v) => (k,
@@ -189,11 +192,11 @@ class SbtBuildMain extends xsbti.AppMain {
             if (debug) {
               println("Environment variables:")
               val environmentVars = System.getenv
-              for ((k, v) <- environmentVars) println(k + ": " + v)
+              for ((k, v) <- environmentVars.asScala) println(k + ": " + v)
               println("\nContent of the \"vars\" section:")
               try { // in case resolve() fails
                 val resolved = endConfig.withOnlyPath("vars").resolve
-                val entries = resolved.entrySet.toSeq.sortBy(_.getKey)
+                val entries = resolved.entrySet.asScala.toSeq.sortBy(_.getKey)
                 val opt = ConfigRenderOptions.concise.setFormatted(true)
                 entries foreach { entry => println(entry.getKey + ": " + entry.getValue.render(opt)) }
               } catch { case e: Exception => println("Unexpected while printing: " + e.getMessage()) }
@@ -259,7 +262,7 @@ class SbtBuildMain extends xsbti.AppMain {
         val (outcome, time) = try {
           timed { main.build(finalConfig, configFile.getName, buildTarget) }
         } finally main.dispose()
-        println("Result: " + outcome.status)
+        println("Result: " + outcome.status())
         println("Build " + (if (outcome.isInstanceOf[BuildBad]) "failed" else "succeeded") + " after: " + time)
         println("All done.")
         if (outcome.isInstanceOf[BuildBad]) Exit(1) else Exit(0)

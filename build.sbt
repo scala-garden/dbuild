@@ -2,9 +2,9 @@ import Dependencies._
 import RemoteDepHelper._
 import SbtSupport._
 
-def MyVersion: String = "0.9.20"
+def MyVersion: String = "0.10.0-SNAPSHOT"
 
-ThisBuild / scalaVersion := scala212
+ThisBuild / scalaVersion := scala3
 
 // keep Maven Central happy
 ThisBuild / developers := List(
@@ -45,15 +45,15 @@ ThisBuild / version := MyVersion
 ThisBuild / resolvers += Resolver.typesafeIvyRepo("releases")
 ThisBuild / resolvers += "Typesafe Repository" at "https://repo.typesafe.com/typesafe/releases/"
 
-def skip210 = Seq(
-  (compile / skip) := scalaVersion.value.startsWith("2.10"),
+def skip212 = Seq(
+  (compile / skip) := scalaVersion.value.startsWith("2.12"),
   publish := Def.taskDyn {
     val p = publish.taskValue
-    if (scalaVersion.value.startsWith("2.10")) Def.task {} else Def.task(p.value)
+    if (scalaVersion.value.startsWith("2.12")) Def.task {} else Def.task(p.value)
   }.value,
   publishLocal := Def.taskDyn {
     val p = publishLocal.taskValue
-    if (scalaVersion.value.startsWith("2.10")) Def.task {} else Def.task(p.value)
+    if (scalaVersion.value.startsWith("2.12")) Def.task {} else Def.task(p.value)
   }.value,
   Compile / doc / sources := {
     val theSources = (Compile / doc / sources).value
@@ -61,22 +61,36 @@ def skip210 = Seq(
   }
 )
 
+// Scala-3 dottydoc chokes on lmcoursier's dataclass-annotated definitions (e.g. Project)
+// when documenting a public member whose signature mentions them (readTasty fails with
+// "undefined: new dataclass.data"); skip doc generation on the Scala 3 pass for projects
+// that expose such signatures, without otherwise skipping their compile/publish tasks.
+def skipDoc3 = Seq(
+  Compile / doc / sources := {
+    val theSources = (Compile / doc / sources).value
+    if (scalaVersion.value.startsWith("3")) List() else theSources
+  }
+)
+
 def crossBuildForPlugins =
-  crossScalaVersions := Vector(scala210, scala212)
+  crossScalaVersions := Vector(scala212, scala3)
 
 def selectSbtVersion =
   (pluginCrossBuild / sbtVersion) := {
     scalaBinaryVersion.value match {
-      case "2.10" => "0.13.18"
       case "2.12" => "1.13.0"
-      case _      => "2.0.7"
+      case "3"    => "2.0.7"
+      case v      => sys.error("Unexpected Scala binary version: " + v)
     }
   }
 
 def selectScalaVersion =
   scalaVersion := {
-    val sb = (pluginCrossBuild / sbtVersion).value
-    if (sb.startsWith("0.13")) "2.10.7" else "2.12.21"
+    (pluginCrossBuild / sbtVersion).value match {
+      case "1.13.0" => scala212
+      case "2.0.7"  => scala3
+      case v        => sys.error("Unexpected sbt version: " + v)
+    }
   }
 
 lazy val root = (project in file("."))
@@ -88,7 +102,7 @@ lazy val root = (project in file("."))
     publishLocal / skip := true,
     crossScalaVersions := Nil,
   )
-  .settings(crossSbtVersions := Seq("0.13.18", "1.13.0"), selectScalaVersion)
+  .settings(crossSbtVersions := Seq("1.13.0", "2.0.7"), selectScalaVersion)
 
 // This subproject only has dynamically
 // generated source files, used to adapt
@@ -97,9 +111,11 @@ lazy val adapter = project
   .dependsOnRemote(specs2 _, jline)
   .dependsOnSbtProvided(sbtLogging, sbtIo, sbtLauncherInt, sbtIvy, sbtSbt)
   .dependsOnSbtProvidedOpt(zincIf212 _)
+  .dependsOnSbt(sbt2Compat)
   .settings(
     crossBuildForPlugins,
     selectSbtVersion,
+    skipDoc3,
     Compile / sourceGenerators += task {
       val dir = (Compile / sourceManaged).value
       val fileName = "Default.scala"
@@ -141,6 +157,7 @@ lazy val hashing = project
 
 lazy val indexmeta = project
   .dependsOnRemote(specs2 _, jline)
+  .dependsOnRemote(circeCore, circeGeneric)
   .settings(
     crossBuildForPlugins,
     selectSbtVersion,
@@ -161,14 +178,15 @@ lazy val actorLogging = project
   .dependsOnRemote(akkaActor _)
   .dependsOnSbtProvided(sbtLogging, sbtIo, sbtLauncherInt)
   .settings(
-    skip210,
+    crossBuildForPlugins,
+    skip212,
     selectSbtVersion,
   )
 
 lazy val metadata = project
   .dependsOnRemote(specs2 _, jline)
   .dependsOn(graph, hashing, indexmeta, deploy)
-  .dependsOnRemote(jackson, typesafeConfig, commonsLang, jacks)
+  .dependsOnRemote(circeCore, circeGeneric, circeGenericExtras _, circeParser, typesafeConfig, commonsLang)
   .settings(
     crossBuildForPlugins,
     selectSbtVersion,
@@ -189,7 +207,7 @@ lazy val repo = project
 lazy val http = project
   .dependsOn(adapter)
   .dependsOnRemote(specs2 _, jline)
-  .dependsOnRemote(dispatch _)
+  .dependsOnRemote(gigahorse)
   .dependsOnSbtProvided(sbtIo, sbtIvy, sbtSbt)
   .settings(
     crossBuildForPlugins,
@@ -224,7 +242,8 @@ lazy val actorProj = project
   .dependsOn(core, actorLogging, proj)
   .dependsOnSbtProvided(sbtIo, sbtIvy)
   .settings(
-    skip210,
+    crossBuildForPlugins,
+    skip212,
     selectSbtVersion,
     scalaXmlAlways,
   )
@@ -261,7 +280,8 @@ lazy val supportGit = project
   .dependsOnRemote(mvnEmbedder, mvnWagon, javaMail, jgit)
   .dependsOnSbtProvided(sbtLauncherInt, sbtIvy)
   .settings(
-    skip210,
+    crossBuildForPlugins,
+    skip212,
     selectSbtVersion,
     scalaXmlAlways,
   )
@@ -277,6 +297,7 @@ lazy val plugin = project
     crossBuildForPlugins,
     selectSbtVersion,
     scalaXmlAlways,
+    skipDoc3,
   )
 
 lazy val dist = (project in file("dist"))
@@ -284,7 +305,8 @@ lazy val dist = (project in file("dist"))
   .enablePlugins(UniversalPlugin)
   .settings(Packaging.settings(build,repo):_*)
   .settings(
-    skip210,
+    crossBuildForPlugins,
+    skip212,
     selectSbtVersion,
     scalaXmlAlways,
   )
@@ -292,7 +314,7 @@ lazy val dist = (project in file("dist"))
 lazy val deploy = project
   .dependsOn(adapter, http)
   .dependsOnRemote(specs2 _, jline)
-  .dependsOnRemote(jackson, typesafeConfig, commonsLang, aws, uriutil, commonsIO, jsch, jacks)
+  .dependsOnRemote(circeCore, circeGeneric, circeParser, typesafeConfig, commonsLang, aws, uriutil, commonsIO, jsch)
   .dependsOnSbtProvided(sbtLogging, sbtIo, sbtSbt)
   .settings(
     crossBuildForPlugins,
@@ -305,13 +327,17 @@ lazy val build = project
   .configs(IntegrationTest)
   .dependsOn(actorProj, support, supportGit, repo, metadata, deploy, proj)
   .dependsOnRemote(aws, uriutil, jsch, oro, scallop, commonsLang)
-  .dependsOnRemote(gpgLibIf210 _)
   .dependsOnSbt(sbtLauncherInt, sbtLogging, sbtIo, sbtIvy, sbtSbt)
   .settings(Defaults.itSettings)
   .settings(
-    skip210,
+    crossBuildForPlugins,
+    skip212,
     selectSbtVersion,
     scalaXmlAlways,
+    // On the Scala 3 pass, scala3-compiler_3 itself depends on an older compiler-interface
+    // (1.10.7) than the rest of sbt 2.0.7's own zinc/librarymanagement modules (2.0.4);
+    // both are early-semver compatible, so just take the newer one instead of erroring out.
+    libraryDependencySchemes += "org.scala-sbt" % "compiler-interface" % VersionScheme.Always,
     SbtSupport.settings,
     // We hook the testLoader of it to make sure all the it tasks have a legit sbt plugin to use.
     // Technically, this just pushes every project.  We could outline just the plugin itself, but for now
@@ -321,7 +347,6 @@ lazy val build = project
       (IntegrationTest / testLoader).value
     },
     IntegrationTest / parallelExecution := false,
-    scalaXmlAlways,
   )
 
 lazy val docs = project
@@ -352,7 +377,7 @@ lazy val sbtLauncherProj = (project in file("sbt-launcher"))
   .dependsOnRemote(specs2 _, jline)
   .settings(
     autoScalaLibrary := false,
-    libraryDependencies += ("org.scala-sbt" % "sbt-launch" % "1.6.2").intransitive,
+    libraryDependencies += ("org.scala-sbt" % "sbt-launch" % "2.0.7").intransitive,
     publish / skip := true,
     publishLocal / skip := true,
   )

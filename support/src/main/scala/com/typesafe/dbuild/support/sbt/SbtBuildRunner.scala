@@ -1,21 +1,23 @@
 package com.typesafe.dbuild.support.sbt
 
-import com.typesafe.dbuild.model._
-import com.typesafe.dbuild.logging.Logger
-import com.typesafe.dbuild.adapter.Adapter
-import Adapter.{ IO, Path, Logger => SbtLogger }
-import Adapter.syntaxio._
-import Path._
 import _root_.java.io.File
-import sys.process.Process
-import com.typesafe.dbuild.model.Utils.{ writeValue, readValue }
+import _root_.sbt.io.syntax.*
+import _root_.sbt.io.{ IO, Path }
+import _root_.sbt.util.{ Logger => SbtLogger }
+import com.typesafe.dbuild.logging.Logger
 import com.typesafe.dbuild.logging.Logger.logFullStackTrace
-import com.typesafe.dbuild.project.build.BuildDirs._
-import com.typesafe.dbuild.support.sbt.SbtRunner.SbtFileNames._
-import com.typesafe.dbuild.support.sbt.SbtRunner.{ sbtIvyCache, buildArtsFile }
+import com.typesafe.dbuild.model.*
 import com.typesafe.dbuild.model.SeqSeqString
-import com.typesafe.dbuild.model.SeqStringH._
+import com.typesafe.dbuild.model.SeqStringH.*
+import com.typesafe.dbuild.model.Utils.{ writeValue, readValue }
+import com.typesafe.dbuild.project.build.BuildDirs.*
+import com.typesafe.dbuild.support.sbt.SbtRunner.SbtFileNames.*
+import com.typesafe.dbuild.support.sbt.SbtRunner.{ sbtIvyCache, buildArtsFile }
 import com.typesafe.dbuild.utils.TrackedProcessBuilder
+import io.circe.generic.semiauto.{ deriveEncoder, deriveDecoder }
+import io.circe.{ Encoder, Decoder }
+import sys.process.Process
+import Path.*
 
 /**
  * Rewiring a level needs the information contained in RewireInput:
@@ -30,11 +32,23 @@ import com.typesafe.dbuild.utils.TrackedProcessBuilder
  */
 case class RewireInput(in: BuildArtifactsIn, subproj: Seq[String],
   crossVersion: String, checkMissing: Boolean, rewriteOverrides: Boolean, debug: Boolean)
+object RewireInput {
+  implicit val rewireInputEncoder: Encoder[RewireInput] = deriveEncoder[RewireInput]
+  implicit val rewireInputDecoder: Decoder[RewireInput] = deriveDecoder[RewireInput]
+}
 /**
  * Input to generateArtifacts()
  */
 case class TestParams(runTests: Boolean, skipMissingTests: Boolean, testTasks: Seq[String])
+object TestParams {
+  implicit val testParamsEncoder: Encoder[TestParams] = deriveEncoder[TestParams]
+  implicit val testParamsDecoder: Decoder[TestParams] = deriveDecoder[TestParams]
+}
 case class GenerateArtifactsInput(info: BuildInput, testParams: TestParams, debug: Boolean)
+object GenerateArtifactsInput {
+  implicit val generateArtifactsInputEncoder: Encoder[GenerateArtifactsInput] = deriveEncoder[GenerateArtifactsInput]
+  implicit val generateArtifactsInputDecoder: Decoder[GenerateArtifactsInput] = deriveDecoder[GenerateArtifactsInput]
+}
 
 object SbtBuilder {
 

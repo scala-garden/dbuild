@@ -1,9 +1,9 @@
 package com.typesafe.dbuild.model
 
-import Utils._
-import org.specs2.mutable.Specification
-import com.typesafe.dbuild.model._
+import Utils.*
 import Utils.{writeValue,readValue}
+import com.typesafe.dbuild.model.*
+import org.specs2.mutable.Specification
 
 object DBuildConfigSpec extends Specification {
   "DBuildConfig" should {
@@ -45,7 +45,7 @@ object DBuildConfigSpec extends Specification {
           setVersion = Some("3.9.43"),
           setVersionSuffix = None,
           extra = readValue[Option[SbtExtraConfig]]("{directory = ZOMG}")
-    		  )), None
+      )), None
     ))
     }
   }

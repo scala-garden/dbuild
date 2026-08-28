@@ -1,11 +1,11 @@
 package com.typesafe.dbuild.support.svn
 
-import com.typesafe.dbuild.adapter.Adapter
-import Adapter.Path._
-import Adapter.{IO,toFF}
-import Adapter.syntaxio._
-import com.typesafe.dbuild.model._
+import _root_.sbt.io.FileFilter.{ globFilter => toFF }
+import _root_.sbt.io.IO
+import _root_.sbt.io.Path.*
+import _root_.sbt.io.syntax.*
 import com.typesafe.dbuild.logging.Logger
+import com.typesafe.dbuild.model.*
 import com.typesafe.dbuild.project.resolve.ProjectResolver
 import com.typesafe.dbuild.support.UriUtil
 
@@ -25,7 +25,7 @@ class SvnProjectResolver extends ProjectResolver {
     val uri = new _root_.java.net.URI(config.uri)
 
     // clean the directory content, just in case there are leftovers
-    IO.delete(dir.*(toFF("*")).get)
+    IO.delete(dir.*(toFF("*")).get())
     if(!(dir / ".svn" ).exists) Svn.checkout(uri, dir, log)
     else Svn.revert(dir, log)
 

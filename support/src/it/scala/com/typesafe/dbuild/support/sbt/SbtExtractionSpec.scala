@@ -22,14 +22,14 @@ object SbtExtractionSpec extends Specification {
          writePluginsFile(projectDir)(
            """|organization := "test"
               |
-              |name := "test-build"
+              |LocalRootProject / name := "test-build"
               |
               |libraryDependencies += "com.typesafe" % "config" % "1.2.1"
               |""".stripMargin)
          writeBuildFile(projectDir)("scalaVersion := \"" + Defaults.scalaVersion + "\"" +
           ("""|
               |
-              |name := "test"
+              |LocalRootProject / name := "test"
               |
               |version := "1.0"
               |
@@ -77,10 +77,10 @@ object SbtExtractionSpec extends Specification {
          )
          buildProjects.projects.flatMap(_.dependencies) must containAllOf(
            // TODO - Why isn't sbt showing up as a dependency?
-           Seq(ProjectRef("scala-library", "org.scala-lang"), ProjectRef("config", "com.typesafe"))
+           Seq(ProjectRef("scala3-library", "org.scala-lang"), ProjectRef("config", "com.typesafe"))
          )
          prodProjects.projects.flatMap(_.dependencies) must containAllOf(
-            Seq(ProjectRef("scala-library", "org.scala-lang"), ProjectRef("junit", "junit"))
+            Seq(ProjectRef("scala3-library", "org.scala-lang"), ProjectRef("junit", "junit"))
          )
       }
     }

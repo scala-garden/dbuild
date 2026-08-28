@@ -1,9 +1,9 @@
 package com.typesafe.dbuild.support
-import com.typesafe.dbuild.model.SbtPluginAttrs
-import com.typesafe.dbuild.adapter.Adapter.{ ModuleID => SbtModuleID, Artifact => SbtArtifact }
-import org.apache.ivy.core.module.id.{ ModuleRevisionId => IvyModuleRevisionId }
-import _root_.scala.collection.JavaConversions._
 import _root_.java.util.{ Map => JavaMap }
+import _root_.sbt.librarymanagement.{ ModuleID => SbtModuleID, Artifact => SbtArtifact }
+import _root_.scala.jdk.CollectionConverters.*
+import com.typesafe.dbuild.model.SbtPluginAttrs
+import org.apache.ivy.core.module.id.{ ModuleRevisionId => IvyModuleRevisionId }
 
 object SbtUtil {
   /**
@@ -15,7 +15,7 @@ object SbtUtil {
   def pluginAttrs(m: SbtArtifact): Option[SbtPluginAttrs] =
     pluginAttrs(m.extraAttributes)
   def pluginAttrs(mr: IvyModuleRevisionId): Option[SbtPluginAttrs] =
-    pluginAttrs(mr.getExtraAttributes.asInstanceOf[JavaMap[String, String]].toMap)
+    pluginAttrs(mr.getExtraAttributes.asInstanceOf[JavaMap[String, String]].asScala.toMap)
   def pluginAttrs(attrs: Map[String, String]): Option[SbtPluginAttrs] = {
     if (attrs.contains("e:sbtVersion") && attrs.contains("e:scalaVersion"))
       Some(SbtPluginAttrs(attrs("e:sbtVersion"), attrs("e:scalaVersion")))

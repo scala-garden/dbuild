@@ -1,22 +1,42 @@
 package com.typesafe.dbuild.model
 
-import com.fasterxml.jackson.annotation.JsonProperty
-import com.typesafe.dbuild.model.Utils.{ readValue, writeValue }
-import org.apache.commons.lang.StringEscapeUtils
+import CirceSupport.*
 import com.typesafe.config.ConfigFactory.parseString
+import com.typesafe.dbuild.model.Utils.{ readValue, writeValue }
+import io.circe.generic.semiauto.{ deriveEncoder, deriveDecoder }
+import io.circe.{ Encoder, Decoder }
+import org.apache.commons.lang.StringEscapeUtils
 
 /**
  * Utility classes, used to perform variable substitutions
  */
-case class SubstitutionNotifications(@JsonProperty("template-vars") vars: SubstitutionVars)
+case class SubstitutionNotifications(vars: SubstitutionVars)
+object SubstitutionNotifications {
+  private val renames = Seq("vars" -> "template-vars")
+  implicit val substitutionNotificationsEncoder: Encoder[SubstitutionNotifications] =
+    renamedEnc(renames: _*)(deriveEncoder[SubstitutionNotifications])
+  implicit val substitutionNotificationsDecoder: Decoder[SubstitutionNotifications] =
+    renamedDec(renames: _*)(deriveDecoder[SubstitutionNotifications])
+}
 case class SubstitutionVars(
-  @JsonProperty("project-name") projectName: String,
-  @JsonProperty("subprojects-report") subprojectsReport: String,
-  @JsonProperty("subprojects-report-tabs") subprojectsReportTabs: String,
-  @JsonProperty("project-description") projectDescription: String,
-  @JsonProperty("padded-project-description") paddedProjectDescription: String,
-  @JsonProperty("config-name") configName: String,
+  projectName: String,
+  subprojectsReport: String,
+  subprojectsReportTabs: String,
+  projectDescription: String,
+  paddedProjectDescription: String,
+  configName: String,
   status: String)
+object SubstitutionVars {
+  private val renames = Seq(
+    "projectName" -> "project-name",
+    "subprojectsReport" -> "subprojects-report",
+    "subprojectsReportTabs" -> "subprojects-report-tabs",
+    "projectDescription" -> "project-description",
+    "paddedProjectDescription" -> "padded-project-description",
+    "configName" -> "config-name")
+  implicit val substitutionVarsEncoder: Encoder[SubstitutionVars] = renamedEnc(renames: _*)(deriveEncoder[SubstitutionVars])
+  implicit val substitutionVarsDecoder: Decoder[SubstitutionVars] = renamedDec(renames: _*)(deriveDecoder[SubstitutionVars])
+}
 // they become:     ${notifications.vars.project-name}, etc.
 
 /**
@@ -28,7 +48,7 @@ class TemplateFormatter(templ: ResolvedTemplate, outcome: BuildOutcome, confName
   lazy val subprojectsReport: String = {
 //    def get(o: BuildOutcome) = new TemplateFormatter(templ, o, confName).summary
 //    val s = outcome.outcomes.map(get)
-    val s = outcome.outcomes.sortBy(_.project.toLowerCase).map{o=>paddedProjectDescription(o)+": "+o.status}
+    val s = outcome.outcomes.sortBy(_.project.toLowerCase).map{o=>paddedProjectDescription(o)+": "+o.status()}
     if (s.isEmpty) "" else s.mkString("", "\n", "\n")
   }
   def paddedProjectDescription(outcome:BuildOutcome) =
@@ -39,7 +59,7 @@ class TemplateFormatter(templ: ResolvedTemplate, outcome: BuildOutcome, confName
     SubstitutionVars(projectName = outcome.project,
       subprojectsReport = subprojectsReport,
       subprojectsReportTabs = subprojectsReport.split("\n").mkString("\t","\n\t","\n"),
-      status = outcome.status,
+      status = outcome.status(),
       projectDescription = if (outcome.project != ".") "project " + outcome.project else "dbuild",
       paddedProjectDescription = paddedProjectDescription(outcome),
       configName = if (confName.endsWith(".dbuild")) confName.substring(0, confName.length-7) else confName))

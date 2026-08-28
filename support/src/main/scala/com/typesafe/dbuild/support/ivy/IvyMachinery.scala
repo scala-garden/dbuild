@@ -1,36 +1,36 @@
 package com.typesafe.dbuild.support.ivy
 
-import com.typesafe.dbuild.project.BuildSystem
-import com.typesafe.dbuild.model._
-import java.io.File
-import com.typesafe.dbuild.adapter.Adapter
-import Adapter.FileRepository
-import Adapter.Path._
-import Adapter.{IO,allPaths}
-import Adapter.IO.relativize
-import Adapter.syntaxio._
+import _root_.sbt.io.IO
+import _root_.sbt.io.IO.relativize
+import _root_.sbt.io.Path.*
+import _root_.sbt.io.syntax.*
+import _root_.sbt.librarymanagement.FileRepository
+import com.typesafe.dbuild.adapter.Adapter.allPaths
 import com.typesafe.dbuild.logging.Logger
-import sys.process._
-import com.typesafe.dbuild.repo.core.LocalRepoHelper
+import com.typesafe.dbuild.model.*
+import com.typesafe.dbuild.model.SeqStringH.*
 import com.typesafe.dbuild.model.Utils.readValue
-import xsbti.Predefined._
+import com.typesafe.dbuild.project.BuildSystem
+import com.typesafe.dbuild.project.build.BuildDirs.*
+import com.typesafe.dbuild.repo.core.LocalRepoHelper
+import com.typesafe.dbuild.support.sbt.Repositories.ivyPattern
+import java.io.File
 import org.apache.ivy
 import ivy.Ivy
-import ivy.plugins.resolver.{ BasicResolver, ChainResolver, FileSystemResolver, IBiblioResolver, URLResolver }
-import ivy.core.settings.IvySettings
 import ivy.core.module.descriptor.{ DefaultModuleDescriptor, DefaultDependencyDescriptor, Artifact }
-import org.apache.ivy.plugins.parser.xml.XmlModuleDescriptorWriter
 import ivy.core.module.id.{ ModuleId, ModuleRevisionId }
-import ivy.core.resolve.{ ResolveEngine, ResolveOptions }
 import ivy.core.report.ResolveReport
-import org.apache.ivy.core.retrieve.RetrieveOptions
+import ivy.core.resolve.{ ResolveEngine, ResolveOptions }
+import ivy.core.settings.IvySettings
+import ivy.plugins.resolver.{ BasicResolver, ChainResolver, FileSystemResolver, IBiblioResolver, URLResolver }
 import org.apache.ivy.core.deliver.DeliverOptions
-import com.typesafe.dbuild.support.sbt.Repositories.ivyPattern
-import org.apache.ivy.core.resolve.IvyNode
 import org.apache.ivy.core.module.descriptor.Configuration
 import org.apache.ivy.core.module.descriptor.DefaultDependencyArtifactDescriptor
-import com.typesafe.dbuild.project.build.BuildDirs._
-import com.typesafe.dbuild.model.SeqStringH._
+import org.apache.ivy.core.resolve.IvyNode
+import org.apache.ivy.core.retrieve.RetrieveOptions
+import org.apache.ivy.plugins.parser.xml.XmlModuleDescriptorWriter
+import sys.process.*
+import xsbti.Predefined.*
 
 object IvyMachinery {
   // there are two stages to the madness below. The first: we create a dummy caller, and add the module we need as a dependency.
@@ -52,7 +52,7 @@ object IvyMachinery {
     transitive: Boolean = true, useOptional: Boolean = true): ResolveResponse = {
     log.info("Running Ivy to extract project info: " + config.name)
     val extra = config.getExtra[IvyExtraConfig]
-    import extra._
+    import extra.*
     // this is the one local to the project (extraction or build)
     val ivyHome = (baseDir / ".ivy2")
     val settings = new IvySettings()
@@ -120,7 +120,7 @@ object IvyMachinery {
 
       val report: ResolveReport = theIvy.resolve(ivyFile.toURL(), resolveOptions)
       if (report.hasError) sys.error("Ivy resolution failure")
-      import scala.collection.JavaConversions._
+      import scala.jdk.CollectionConverters.*
       val nodes = report.getDependencies().asInstanceOf[_root_.java.util.List[IvyNode]]
       if (nodes.isEmpty) {
         sys.error("Ivy error: no nodes after resolve. Please report.")
@@ -132,7 +132,7 @@ object IvyMachinery {
 
       // diagnostic
       log.debug("Report:")
-      nodes foreach { n =>
+      nodes.asScala foreach { n =>
         log.debug("Node: " + n + (if (n.isLoaded) " (loaded)" else " (not loaded)"))
         log.debug("is optional: " + n.getConfigurations("optional").nonEmpty)
         if (n.isLoaded) {
@@ -244,7 +244,7 @@ object IvyMachinery {
     deo.setConfs(md2.getConfigurations() map { _.getName() })
     deo.setPubdate(new java.util.Date())
     theIvy.deliver(modRevIdpublish, modRevIdpublish.getRevision, (ivyxmlDir / ivyPattern).getCanonicalPath, deo)
-    allPaths(ivyxmlDir).get.foreach {
+    allPaths(ivyxmlDir).get().foreach {
       f =>
         if (f.getName == "ivy.xml")
           scala.io.Source.fromFile(f).getLines foreach { s => log.debug(s) }
@@ -334,8 +334,8 @@ object IvyMachinery {
   }
   def hasImplicitClassifier(artifact: Artifact): Boolean =
     {
-      import collection.JavaConversions._
-      artifact.getQualifiedExtraAttributes.keys.exists(_.asInstanceOf[String] startsWith "m:")
+      import scala.jdk.CollectionConverters.*
+      artifact.getQualifiedExtraAttributes.asScala.keys.exists(_.asInstanceOf[String] startsWith "m:")
     }
   def includeRepo(repo: xsbti.Repository) = !(isMavenLocal(repo))
 
@@ -348,7 +348,7 @@ object IvyMachinery {
       resolver
     }
 
-  def addResolvers(settings: IvySettings, ivyHome: File, repos: List[xsbti.Repository], dbuildRepoDir: File) {
+  def addResolvers(settings: IvySettings, ivyHome: File, repos: List[xsbti.Repository], dbuildRepoDir: File): Unit = {
     val newDefault = new ChainResolver {
       override def locate(artifact: Artifact) =
         if (hasImplicitClassifier(artifact)) null else super.locate(artifact)
@@ -375,9 +375,9 @@ object IvyMachinery {
   }
 
   final class IvyLoggerInterface(logger: Logger) extends ivy.util.MessageLogger {
-    import SbtIvyLogger._
+    import SbtIvyLogger.*
     def rawlog(msg: String, level: Int) = log(msg, level)
-    def log(msg: String, level: Int) {
+    def log(msg: String, level: Int): Unit = {
       import ivy.util.Message.{ MSG_DEBUG, MSG_VERBOSE, MSG_INFO, MSG_WARN, MSG_ERR }
       level match {
         case MSG_DEBUG => debug(msg)
@@ -388,7 +388,7 @@ object IvyMachinery {
       }
     }
 
-    def debug(msg: String) {}
+    def debug(msg: String): Unit = {}
     def verbose(msg: String) = logger.verbose(msg)
     def deprecated(msg: String) = warn(msg)
     def info(msg: String) = logger.info(msg)
@@ -396,7 +396,7 @@ object IvyMachinery {
     def warn(msg: String) = logger.warn(msg)
     def error(msg: String) = if (acceptError(msg)) logger.error(msg)
 
-    private def emptyList = java.util.Collections.emptyList[T forSome { type T }]
+    private def emptyList = java.util.Collections.emptyList[AnyRef]
     def getProblems = emptyList
     def getWarns = emptyList
     def getErrors = emptyList
@@ -408,6 +408,6 @@ object IvyMachinery {
 
     def endProgress(msg: String) = info(msg)
     def isShowProgress = false
-    def setShowProgress(progress: Boolean) {}
+    def setShowProgress(progress: Boolean): Unit = {}
   }
 }
